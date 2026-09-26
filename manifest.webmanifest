@@ -1,0 +1,35 @@
+{
+  "name": "Nova — Your AI Assistant",
+  "short_name": "Nova",
+  "description": "Hands-free AI assistant with top models, study help, and device control. Works offline.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#070a13",
+  "theme_color": "#070a13",
+  "lang": "en",
+  "categories": ["productivity", "education", "utilities"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "New chat",
+      "short_name": "New chat",
+      "description": "Start a fresh conversation with Nova",
+      "url": "/?action=new-chat",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Study mode",
+      "short_name": "Study",
+      "description": "Open Nova in study mode",
+      "url": "/?action=study",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

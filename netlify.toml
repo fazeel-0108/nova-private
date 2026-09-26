@@ -1,0 +1,47 @@
+[build]
+  publish = "."
+
+# ── PRIVATE SITE ─────────────────────────────────────────────────────
+# 1. Keep crawlers out + block framing/embedding:
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow, noarchive"
+    X-Frame-Options = "DENY"
+    Permissions-Policy = "camera=(self), microphone=(self)"
+
+# 2. Password gate: set these two env vars in Netlify:
+#      Site configuration → Environment variables
+#      NOVA_PASS  = your secret password (e.g. a long random string)
+#      NOVA_HINT  = a short hint only you understand (optional)
+#    Then the netlify function at /.netlify/functions/gate checks it.
+#    (Deploys via GitHub import only — drag-drop sites have no functions.)
+
+# Route /api/chat to the serverless function in netlify/functions/
+[[redirects]]
+  from = "/api/chat"
+  to = "/.netlify/functions/chat"
+  status = 200
+  force = true
+
+# Cross-device sync store (chat/notes/memory merge)
+[[redirects]]
+  from = "/api/sync"
+  to = "/.netlify/functions/sync"
+  status = 200
+  force = true
+
+# Private-site password gate
+[[redirects]]
+  from = "/api/gate"
+  to = "/.netlify/functions/gate"
+  status = 200
+  force = true
+
+# SSE instant-push isn't possible on serverless — the app auto-falls back
+# to 4s polling, so just return an empty 200 for the events path.
+[[redirects]]
+  from = "/api/sync/events"
+  to = "/api/sync"
+  status = 200
+  force = true

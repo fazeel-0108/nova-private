@@ -280,13 +280,13 @@ const el = {
 };
 
 /* ---------------- UI helpers ---------------- */
-function toast(msg, kind = "") {
+function toast(msg, kind = "", ms = 2600) {
   const t = document.createElement("div");
   t.className = `toast ${kind}`;
   t.textContent = msg;
   el.toasts.appendChild(t);
-  setTimeout(() => { t.classList.add("hiding"); }, 2600);
-  setTimeout(() => t.remove(), 3000);
+  setTimeout(() => { t.classList.add("hiding"); }, ms);
+  setTimeout(() => t.remove(), ms + 400);
 }
 
 /* Celebration sparks on the cosmic background (safe no-op if bgfx absent) */
@@ -3041,11 +3041,18 @@ async function privateGate() {
   if (token) {
     try {
       const r = await fetch("/api/gate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+      if (r.status === 500) return true;          // gate not configured → fail open
       if (r.ok) {
         const j = await r.json();
-        if (j.ok || j.configured) return true;    // token still valid (or gate not configured)
+        if (j.ok || j.configured) return true;    // token still valid
       }
     } catch { /* offline: trust the stored token */ return true; }
+  } else {
+    // no token yet — is the gate even configured?
+    try {
+      const probe = await fetch("/api/gate", { method: "GET" });
+      if (probe.status === 500) return true;      // NOVA_PASS not set → open site
+    } catch { /* offline hosted: fall through to lock */ }
   }
   // show lock screen
   const lock = document.getElementById("lock"), inp = document.getElementById("lock-pass"),
@@ -3062,7 +3069,13 @@ async function privateGate() {
     err.textContent = "";
     try {
       const r = await fetch("/api/gate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pass: inp.value }) });
-      if (r.status === 500) { err.textContent = "Gate not configured (set NOVA_PASS in Netlify)."; return; }
+      if (r.status === 500) {
+        // Gate not configured — don't trap the user; open with a hint.
+        lock.classList.add("hidden");
+        toast("Private gate not configured — set NOVA_PASS in Netlify to lock this site", "warn");
+        init();
+        return;
+      }
       if (!r.ok) { err.textContent = "Wrong passcode — try again"; inp.value = ""; inp.focus(); return; }
       const j = await r.json();
       if (j.token) LS.set("nova.lockToken", j.token);

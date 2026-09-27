@@ -1773,7 +1773,7 @@ function closeJarvis() {
 
 /* The existing voice loop runs inside the overlay; mirror its phases. */
 function startVoiceChatInJarvis() {
-  if (!SR) { toast("Voice needs Chrome/Edge", "warn"); return; }
+  if (!SR && !NATIVE_BRIDGE) { toast("Voice needs Chrome/Edge", "warn"); return; }
   if (!voiceChat) { voiceChat = true; el.mic.classList.add("listening"); listenOnce(); }
   // hook phase updates
   const origSetWave = setWaveText;
@@ -1978,7 +1978,50 @@ async function flushQueue() {
 
 /* ---------------- Voice: STT, TTS, hands-free ---------------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const NATIVE_BRIDGE = typeof window !== "undefined" && window.NovaNative; // inside the Android APK
 let recog = null, recogForCommand = false;
+
+/* Android APK bridge: wraps the NATIVE recognizer in the web-SR interface so
+   the whole voice stack (voice chat, hands-free, echo guard) works unchanged
+   inside the app — where window.SpeechRecognition doesn't exist. */
+class NativeSR {
+  constructor() {
+    this.lang = "en-US"; this.continuous = false; this.interimResults = false;
+    this.onresult = null; this.onend = null; this.onerror = null; this.onspeechstart = null;
+    this._open = false;
+  }
+  _evt(text, isFinal) {
+    const res = { isFinal: !!isFinal, 0: { transcript: text } };
+    const evt = { resultIndex: 0, results: [res] };
+    evt.results[Symbol.iterator] = function* () { yield res; };
+    return evt;
+  }
+  start() {
+    this._open = true;
+    window.NovaSpeechResult = (text, isFinal) => {
+      if (!this._open) return;
+      this._open = false;
+      if (this.onresult) this.onresult(this._evt(text, true));
+      setTimeout(() => this.onend && this.onend(), 30);
+    };
+    window.NovaSpeechPartial = (text) => {
+      if (!this._open || !this.interimResults || !this.onresult) return;
+      this.onresult(this._evt(text, false));
+    };
+    window.NovaSpeechError = (code) => {
+      if (!this._open) return;
+      this._open = false;
+      if (this.onerror) this.onerror({ error: code });
+      setTimeout(() => this.onend && this.onend(), 30);
+    };
+    window.NovaSpeechReady = () => { if (this.onspeechstart) this.onspeechstart(); };
+    try { window.NovaNative.start(); }
+    catch { this._open = false; if (this.onerror) this.onerror({ error: "unknown" }); }
+  }
+  stop() { this._open = false; try { window.NovaNative.stop(); } catch { /* ignore */ } }
+  abort() { this.stop(); }
+}
+function createRecog() { return NATIVE_BRIDGE ? new NativeSR() : new SR(); }
 
 /* ═══════ TTS text sanitizer: Nova speaks only natural human words ═══════
    Strips emojis (and their names), markdown, code blocks, URLs and junk. */
@@ -2071,7 +2114,7 @@ function pauseRecognitionForTTS() {
 }
 function resumeRecognitionAfterTTS() {
   micGate(true);
-  if (!recogPaused || !state.listening || !SR) { recogPaused = false; return; }
+  if (!recogPaused || !state.listening || (!SR && !NATIVE_BRIDGE)) { recogPaused = false; return; }
   recogPaused = false;
   const tryStart = (tries) => {
     if (!state.listening) return;
@@ -2187,7 +2230,7 @@ function stopVoiceUI() {
 }
 
 async function startMicDictation() {
-  if (!SR) { toast("Voice input not supported in this browser", "warn"); return; }
+  if (!SR && !NATIVE_BRIDGE) { toast("Voice input not supported in this browser", "warn"); return; }
   if (voiceChat) return endVoiceChat("Voice chat ended");
   if (state.busy || voiceThinking) { toast("One moment — still answering…", "warn"); return; }
   voiceChat = true;
@@ -2200,7 +2243,7 @@ async function listenOnce() {
   if (!voiceChat || state.busy || voiceThinking) return;
   return new Promise((resolve) => {
     stopListening();
-    recog = new SR();
+    recog = createRecog();
     recog.lang = navigator.language || "en-US";
     recog.interimResults = true;
     recog.continuous = false;
@@ -2286,8 +2329,8 @@ el.waveText.onclick = () => endVoiceChat("Voice chat ended ✓");
    Upgraded: auto-rearms forever, routes the reactor, and can auto-start. */
 function toggleHandsFree() {
   if (state.listening) { stopListening(); setHudState("idle"); return; }
-  if (!SR) { toast("Hands-free needs Chrome/Edge (or Android Chrome)", "warn"); return; }
-  recog = new SR();
+  if (!SR && !NATIVE_BRIDGE) { toast("Hands-free needs Chrome/Edge — or the Nova app", "warn"); return; }
+  recog = createRecog();
   recog.lang = navigator.language || "en-US";
   recog.continuous = true;
   recog.interimResults = false;
@@ -3250,7 +3293,7 @@ function init() {
   // Always-on hands-free: resume automatically on every launch.
   if (state.handsFree) {
     setTimeout(() => {
-      if (state.listening || !SR) return;
+      if (state.listening || (!SR && !NATIVE_BRIDGE)) return;
       try { toggleHandsFree(); keepAwake(true); } catch { /* mic not granted yet */ }
     }, 1800);
   }

@@ -3033,7 +3033,7 @@ function healProviderMismatch() {
    Netlify, the site stays behind a passcode; a correct unlock is remembered
    on this device (token in localStorage), so you type it once per device. */
 async function privateGate() {
-  const hosted = /^https?:\/\//.test(location.protocol) &&
+  const hosted = location.protocol === "https:" &&
     !/^(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(location.hostname) &&
     !/\.local$/i.test(location.hostname);
   if (!hosted) return true;                       // local dev — no lock

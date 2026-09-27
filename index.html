@@ -190,9 +190,19 @@
         </label>
         <label class="field">
           <span>🧠 What Nova knows about you (one fact per line)</span>
-          <textarea id="set-memory" rows="4" placeholder="e.g. Name: Ali&#10;Studies at NUST&#10;Best friend: Ahmed"></textarea>
+          <textarea id="set-memory" rows="6" placeholder="Name: Ali&#10;City: Lahore&#10;College: NUST&#10;Best friend: Ahmed"></textarea>
           <small>Say “remember…” / “forget…” in chat, or edit here. Synced across your devices.</small>
+          <button id="btn-about-template" class="model-dd-btn" type="button">📋 Fill the about-me list for me</button>
         </label>
+        <label class="field row">
+          <input id="set-handsfree" type="checkbox" />
+          <span>🎙️ Always-on hands-free — say “<span id="hf-nick">Nova</span>” anywhere to wake me</span>
+        </label>
+        <div class="field sync-box">
+          <span>🖥️ <b>Your devices</b> — every device that unlocked Nova</span>
+          <div id="devices-list" class="dev-list"><div class="dev-row muted">open settings to refresh</div></div>
+          <small>Each device shows its name & IP. The ✕ removes its access — it must enter the passcode again.</small>
+        </div>
         <div class="field sync-box">
           <span>☁️ <b>Sync phone ↔ laptop</b> — one brain everywhere</span>
           <div class="sync-row">

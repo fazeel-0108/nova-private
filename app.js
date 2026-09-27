@@ -25,6 +25,7 @@ const state = {
   nickname: LS.get("nova.nickname", "Nova"),
   autospeak: LS.get("nova.autospeak", false),
   studyStrict: LS.get("nova.studyStrict", true),
+  handsFree: LS.get("nova.handsFree", false),   // always-on wake word
   mode: LS.get("nova.mode", "chat"),
   theme: LS.get("nova.theme", "dark"),
   chats: LS.get("nova.chats", {}),   // { id: {id, title, mode, messages: [{role, content}], ts} }
@@ -142,8 +143,8 @@ function novaLiteReply(text) {
     return `Hey! 👋 I'm **${state.nickname}** — your assistant. I'm running on my built-in **Lite brain** right now, so I can take notes, do math, open apps, quiz you and explain study topics.\n\nFor full AI chat about *anything*, add a free key in ⚙️ Settings — takes 1 minute.`;
   if (/(how are you|kaisi ho|kaise ho)/.test(t)) return "Running great! ✦ Ready when you are. Try `quiz me on photosynthesis` or say `open youtube`.";
   if (/^(who are you|your name|tum kaun ho)/.test(t)) return `I'm **${state.nickname}** ✦ — your personal AI assistant. Right now I'm on my free built-in Lite brain; add an API key in ⚙️ to upgrade me to GPT-4o / Claude / Gemini.`;
-  if (/(what.*time|time.*now)/.test(t)) return `🕐 It's **${new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}**.`;
-  if (/(what.*(date|day)|today.*date)/.test(t)) return `📅 Today is **${new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}**.`;
+  if (/(what.*time|time.*now|^time$|^time\\?$)/.test(t)) return `🕐 It's **${new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}**.`;
+  if (/(what.*(date|day)|today.*date|^date$|^date\\?|^day today$)/.test(t)) return `📅 Today is **${new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}**.`;
   if (/(joke|funny|hasao)/.test(t)) {
     const jokes = ["Why do programmers prefer dark mode? Because light attracts bugs! 🐛", "Why did the student eat his homework? The teacher said it was a piece of cake! 🎂", "I told my computer I needed a break… now it won't stop sending kit-kat ads. 🍫", "Why was the math book sad? Too many problems. ➗"];
     return jokes[Math.floor(Math.random() * jokes.length)];
@@ -869,9 +870,16 @@ const APPS = {
   spotify: "https://open.spotify.com", netflix: "https://netflix.com",
   instagram: "https://instagram.com", whatsapp: "https://web.whatsapp.com",
   telegram: "https://web.telegram.org", twitter: "https://twitter.com",
-  x: "https://twitter.com", facebook: "https://facebook.com",
-  chatgpt: "https://chatgpt.com", github: "https://github.com",
+  snapchat: "https://web.snapchat.com",
+  "snap chat": "https://web.snapchat.com",
+  twitch: "https://twitch.tv", discord: "https://discord.com/app",
+  coursera: "https://coursera.org", khan: "https://khanacademy.org",
+  "khan academy": "https://khanacademy.org", chatgpt: "https://chatgpt.com", github: "https://github.com",
   linkedin: "https://linkedin.com", reddit: "https://reddit.com",
+  pinterest: "https://pinterest.com", quora: "https://quora.com",
+  "google classroom": "https://classroom.google.com",
+  classroom: "https://classroom.google.com", "ms teams": "https://teams.microsoft.com",
+  teams: "https://teams.microsoft.com", zoom: "https://zoom.us",
   calendar: "https://calendar.google.com", keep: "https://keep.google.com",
   "play store": "https://play.google.com/store",
   amazon: "https://amazon.com", flipkart: "https://flipkart.com",
@@ -920,6 +928,16 @@ async function tryCommand(text) {
       `_Offline: notes, flashcards, math, app-opening and queueing still work._`,
       "speak"
     );
+  }
+
+  // time / date — instant + spoken on every brain (no AI round-trip, correct timezone)
+  if (/^(what(?:'s| is)?( the)? time( now)?|time\??|current time)$/.test(t)) {
+    const now = new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    return say(`🕐 It's **${now}**.`, "speak");
+  }
+  if (/^(what(?:'s| is)?( the)? (date|day)( today)?|date\??|today'?s date|what day is (it|today))$/.test(t)) {
+    const d = new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    return say(`📅 Today is **${d}**.`, "speak");
   }
 
   // notes (match original text to preserve capitalization)
@@ -2019,10 +2037,11 @@ function speak(text) {
   const u = new SpeechSynthesisUtterance(clean);
   if (jarvisVoice) u.voice = jarvisVoice;
   u.rate = 1.0; u.pitch = 0.82; u.volume = 1.0;   // the JARVIS depth
-  u.onstart = () => { state.speaking = true; setHudState("speaking"); setVoiceState("speaking", clean.slice(0, 120)); };
+  u.onstart = () => { state.speaking = true; pauseRecognitionForTTS(); setHudState("speaking"); setVoiceState("speaking", clean.slice(0, 120)); };
   u.onend = () => {
     state.speaking = false;
     setTimeout(() => { if (!state.speaking && !state.busy) setHudState("idle"); }, 300); // echo-gate buffer
+    resumeRecognitionAfterTTS();                       // hands-free restarts listening here
   };
   speechSynthesis.speak(u);
 }
@@ -2033,9 +2052,33 @@ function speakNow(text) {
   const u = new SpeechSynthesisUtterance(cleanForSpeech(text));
   if (jarvisVoice) u.voice = jarvisVoice;
   u.rate = 1.0; u.pitch = 0.82;
-  u.onstart = () => { state.speaking = true; setHudState("speaking"); };
-  u.onend = () => { state.speaking = false; setTimeout(() => { if (!state.speaking && !state.busy) setHudState("idle"); }, 300); };
+  u.onstart = () => { state.speaking = true; pauseRecognitionForTTS(); setHudState("speaking"); };
+  u.onend = () => { state.speaking = false; setTimeout(() => { if (!state.speaking && !state.busy) setHudState("idle"); }, 300); resumeRecognitionAfterTTS(); };
   speechSynthesis.speak(u);
+}
+
+/* ECHO KILL: micGate() mutes the raw stream, but SpeechRecognition (Chrome's
+   engine) keeps its own tap on the mic — so it still heard Nova's replies.
+   While Nova speaks, we fully stop the recognizer and restart it afterwards. */
+let recogPaused = false;
+let recogPauseBlobs = [];   // words captured while muting (should be none, but just in case)
+function pauseRecognitionForTTS() {
+  if (recog && state.listening) {
+    recogPaused = true;
+    try { recog.onend = null; recog.abort(); } catch { try { recog.stop(); } catch { /* ignore */ } }
+  }
+  micGate(false);
+}
+function resumeRecognitionAfterTTS() {
+  micGate(true);
+  if (!recogPaused || !state.listening || !SR) { recogPaused = false; return; }
+  recogPaused = false;
+  const tryStart = (tries) => {
+    if (!state.listening) return;
+    try { recog.start(); }
+    catch { if (tries > 0) setTimeout(() => tryStart(tries - 1), 250); }
+  };
+  tryStart(6);
 }
 
 /* ═══════ PERSISTENT MICROPHONE ═══════
@@ -2168,6 +2211,7 @@ async function listenOnce() {
 
     recog.onspeechstart = () => setWaveText("I'm listening…");
     recog.onresult = (e) => {
+      if (state.speaking || voiceThinking) return;   // ECHO GUARD: never accept words while Nova talks
       gotSpeech = true;
       let interim = "";
       for (const r of e.results) {
@@ -2259,14 +2303,22 @@ function toggleHandsFree() {
       const heard = norm(e.results[i][0].transcript);
       const rx = new RegExp(`(?:^|\\b)(?:hey\\s+)?${nick}\\b[,!\\s]*(.*)`);
       const m = heard.match(rx);
-      if (m && m[1].trim().length > 1) {
-        addBubble("user", `🎙️ “${e.results[i][0].transcript.trim()}”`);
-        handleSend(m[1].trim());
+      if (!m) continue;
+      const cmd = m[1].trim();
+      addBubble("user", `🎙️ “${e.results[i][0].transcript.trim()}”`);
+      if (cmd.length <= 1) {
+        // Just the wake name — greet, then open the floor.
+        const greeting = `Yes ${state.nickname === "Nova" ? "sir" : ""}, how can I help you today?`.replace(/\s+/g, " ");
+        speakNow(greeting);
+        addBubble("ai", `✦ ${greeting}`);
+        setVoiceState("listening", "waiting for your command…");
+      } else {
+        handleSend(cmd);
       }
     }
   };
   recog.onend = () => {
-    if (state.listening) { try { recog.start(); } catch { /* restarting */ } }
+    if (state.listening) { setTimeout(() => { if (state.listening) { try { recog.start(); } catch { /* restarting */ } } }, 200); }
   };
   recog.onerror = (ev) => {
     if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
@@ -2276,7 +2328,7 @@ function toggleHandsFree() {
       toast("Voice needs internet — retrying", "warn");
     }
   };
-  try { recog.start(); toast(`Hands-free on — say “${state.nickname}, …”`, "ok"); }
+  try { recog.start(); toast(`Hands-free on — say “${state.nickname}, …”`, "ok"); keepAwake(true); }
   catch { stopListening(); }
 }
 
@@ -2285,6 +2337,7 @@ function stopListening() {
   el.listenBanner.classList.add("hidden");
   el.mic.classList.remove("listening");
   if (recog) { try { recog.stop(); } catch { /* ignore */ } recog = null; }
+  keepAwake(false);
   setHudState("idle");
 }
 
@@ -2323,9 +2376,11 @@ function openSettings() {
   el.setNickname.value = state.nickname;
   el.setAutospeak.checked = state.autospeak;
   el.setStudyStrict.checked = state.studyStrict;
+  const hf = $("#set-handsfree"); if (hf) hf.checked = state.handsFree;
   $("#set-memory").value = state.profile.facts.join("\n");
   $("#set-sync-code").value = state.syncCode;
   updateSyncStatus();
+  refreshDevices();
   fillModelSelect();
   refreshTHModels();
   el.settingsModal.classList.remove("hidden");
@@ -2335,6 +2390,52 @@ function updateSyncStatus() {
   const s = $("#sync-status");
   if (!s) return;
   s.textContent = state.syncCode ? `connected as “${state.syncCode}” · ${deviceName()}` : "not connected";
+}
+
+/* ---- Device dashboard: every device that unlocked this site (name · IP · last seen) ---- */
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on && !wakeLock && "wakeLock" in navigator) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch { /* unsupported / screen off — hands-free just pauses */ }
+}
+
+async function refreshDevices() {
+  const box = document.getElementById("devices-list");
+  if (!box) return;
+  box.innerHTML = `<div class="dev-row muted">checking…</div>`;
+  const token = LS.get("nova.lockToken", "");
+  if (!token) { box.innerHTML = `<div class="dev-row muted">unlock first</div>`; return; }
+  try {
+    const r = await fetch("/api/gate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, listAll: 1 }) });
+    const j = await r.json();
+    if (!j.ok || !j.devices?.length) { box.innerHTML = `<div class="dev-row muted">no devices yet</div>`; return; }
+    const myId = LS.get("nova.devId", "");
+    box.innerHTML = "";
+    for (const d of j.devices) {
+      const row = document.createElement("div");
+      row.className = "dev-row";
+      const mins = Math.max(0, Math.round((Date.now() - d.seen) / 60000));
+      const seen = mins < 1 ? "online now" : mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)} h ago`;
+      row.innerHTML = `<span class="dev-dot${mins < 5 ? " live" : ""}"></span>
+        <span class="dev-name">${d.name || "Device"}${d.id === myId ? " <b class=\"dev-you\">· this device</b>" : ""}
+        <small>${d.ip || ""} · ${seen}</small></span>`;
+      const btn = document.createElement("button");
+      btn.className = "dev-revoke"; btn.textContent = "✕"; btn.title = "Remove access (device must log in again)";
+      btn.onclick = async () => {
+        await fetch("/api/gate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, revoke: d.id }) });
+        if (d.id === myId) { LS.set("nova.lockToken", ""); location.reload(); }
+        else { toast("Access removed — that device must log in again", "ok"); refreshDevices(); }
+      };
+      row.appendChild(btn);
+      box.appendChild(row);
+    }
+  } catch {
+    box.innerHTML = `<div class="dev-row muted">offline — showing local info only</div>`;
+  }
 }
 
 /* Auto-discover the full live Token Harbor model list (silent). */
@@ -2433,6 +2534,11 @@ function saveSettings() {
   state.profile.facts = memLines.filter((l) => l !== nameLine);
   LS.set("nova.profile", state.profile);
   scheduleSync();
+  const hfBox = $("#set-handsfree");
+  state.handsFree = !!(hfBox && hfBox.checked);
+  LS.set("nova.handsFree", state.handsFree);
+  if (state.handsFree && !state.listening) { try { toggleHandsFree(); } catch { /* needs SR */ } }
+  if (!state.handsFree && state.listening) stopListening();
   LS.set("nova.model", state.model);
   LS.set("nova.nickname", state.nickname);
   LS.set("nova.autospeak", state.autospeak);
@@ -2682,6 +2788,20 @@ function autosize() {
 
 function wire() {
   el.menu.onclick = () => { el.sidebar.classList.toggle("open"); el.scrim.classList.toggle("show"); };
+  const aboutBtn = $("#btn-about-template");
+  if (aboutBtn) aboutBtn.onclick = () => {
+    const ta = $("#set-memory");
+    if (!ta.value.trim()) {
+      ta.value = "Name: \nCity: \nCollege / Job: \nClass / Role: \nBest friend: \nBirthday: \nFavourite food: \nMother tongue: ";
+    } else {
+      // add only missing template lines
+      const lines = ["Name: ", "City: ", "College / Job: ", "Best friend: ", "Birthday: "];
+      for (const l of lines) if (!ta.value.split("\n").some((x) => x.split(":")[0].trim() === l.split(":")[0].trim())) ta.value += "\n" + l;
+    }
+    ta.focus();
+    toast("Fill in the blanks — Nova will know you ✦", "ok");
+  };
+  const hfNick = $("#hf-nick"); if (hfNick) hfNick.textContent = state.nickname;
   const topHome = $("#btn-home-4");
   if (topHome) topHome.onclick = () => {
     el.sidebar.classList.remove("open"); el.scrim.classList.remove("show");
@@ -2878,6 +2998,7 @@ function syncPayload() {
     cards: state.cards,
     profile: state.profile,
     nickname: state.nickname,
+    handsFree: !!state.handsFree,
     _ts: Date.now(),
   };
 }
@@ -2898,6 +3019,14 @@ function applySynced(data) {
       if (!seen.has(k)) { state.notes.push(n); seen.add(k); changed = true; }
     }
     state.notes.sort((a, b) => b.ts - a.ts);
+  }
+  if (typeof data.handsFree === "boolean" && data.handsFree !== state.handsFree) {
+    state.handsFree = data.handsFree;
+    LS.set("nova.handsFree", state.handsFree);
+    const hf = $("#set-handsfree"); if (hf) hf.checked = state.handsFree;
+    if (state.handsFree && !state.listening) { try { toggleHandsFree(); } catch { /* no SR */ } }
+    if (!state.handsFree && state.listening) stopListening();
+    changed = true;
   }
   if (data.cards && typeof data.cards === "object") {
     for (const [topic, cards] of Object.entries(data.cards)) {
@@ -3044,7 +3173,7 @@ async function privateGate() {
       if (r.status === 500) return true;          // gate not configured → fail open
       if (r.ok) {
         const j = await r.json();
-        if (j.ok || j.configured) return true;    // token still valid
+        if (j.ok || j.configured) { if (j.devId) LS.set("nova.devId", j.devId); return true; }    // token still valid
       }
     } catch { /* offline: trust the stored token */ return true; }
   } else {
@@ -3079,6 +3208,7 @@ async function privateGate() {
       if (!r.ok) { err.textContent = "Wrong passcode — try again"; inp.value = ""; inp.focus(); return; }
       const j = await r.json();
       if (j.token) LS.set("nova.lockToken", j.token);
+      if (j.devId) LS.set("nova.devId", j.devId);
       lock.classList.add("hidden");
       init();
     } catch {
@@ -3117,6 +3247,13 @@ function init() {
   updateQueueInfo();
   wireRipples();
   discoverOllama();
+  // Always-on hands-free: resume automatically on every launch.
+  if (state.handsFree) {
+    setTimeout(() => {
+      if (state.listening || !SR) return;
+      try { toggleHandsFree(); keepAwake(true); } catch { /* mic not granted yet */ }
+    }, 1800);
+  }
   const sendIcon = el.send.innerHTML; // remember the SVG arrow for busy-spin swaps
   el.send.dataset.icon = sendIcon;
   el.input.focus();

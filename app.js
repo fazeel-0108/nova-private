@@ -3202,7 +3202,6 @@ function wire() {
   $("#btn-theme").onclick = cycleTheme;
   $("#btn-theme-2").onclick = cycleTheme;
   $("#btn-settings-2").onclick = () => openSettings();
-  $("#nav-newchat-foot").onclick = () => animateNewChat();
   $("#nav-palette").onclick = openPalette;
   $("#nav-settings-foot").onclick = () => openSettings();
   $("#side-search").addEventListener("input", () => renderHistoryInto(el.history, $("#side-search").value));
@@ -3238,12 +3237,7 @@ function wire() {
   $("#palette-input").addEventListener("input", () => { paletteSel = 0; renderPalette($("#palette-input").value); });
 
   el.home.querySelectorAll(".chip").forEach((b) => { b.onclick = () => handleChip(b.dataset.chip); });
-  el.btnHome.onclick = () => {
-    el.sidebar.classList.remove("open"); el.scrim.classList.remove("show");
-    state.currentId = null; // always land on the greeting screen
-    LS.set("nova.currentId", null);
-    renderMessages();
-  };
+  // Home navigation lives on the bottom nav + brand click (goHome) — no legacy topbar button.
 
   const origRenderMessages = renderMessages;
   renderMessages = function () {

@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Nova — Your AI Assistant</title>
-  <meta name="description" content="Hands-free AI assistant with top models, study help and device control. Works offline." />
-  <meta name="theme-color" content="#070a13" />
+  <meta name="description" content="A calm, capable AI assistant. Chat, study, notes and voice — synced across your devices." />
+  <meta name="theme-color" content="#0b0d12" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -19,131 +19,123 @@
 </head>
 <body>
   <canvas id="bgfx-canvas" aria-hidden="true"></canvas>
-  <div class="bgfx" aria-hidden="true">
-    <div class="bg-grid"></div>
-    <div class="aurora"><i></i><i></i><i></i><i></i></div>
-    <div class="particles">
-      <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-    </div>
-  </div>
-  <div class="noise" aria-hidden="true"></div>
+  <div id="bgfx-fallback" aria-hidden="true"></div>
+
   <div id="app">
     <header class="topbar">
-      <button id="btn-menu" class="icon-btn" aria-label="Menu">☰</button>
-      <button id="btn-home-4" class="icon-btn" aria-label="Home" title="Home">⌂</button>
+      <button id="btn-menu" class="icon-btn" aria-label="Open menu">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
       <div class="brand" id="brand">
-        <span class="arc-core" id="arc-core" aria-hidden="true">
-          <svg viewBox="0 0 48 48" width="30" height="30">
-            <defs>
-              <radialGradient id="arc-glow" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stop-color="#bdfcff"/>
-                <stop offset="45%" stop-color="#00f0ff"/>
-                <stop offset="100%" stop-color="rgba(0,240,255,0)"/>
-              </radialGradient>
-            </defs>
-            <circle class="arc-halo" cx="24" cy="24" r="22" fill="url(#arc-glow)" opacity="0.55"/>
-            <circle class="arc-outer" cx="24" cy="24" r="17" fill="none" stroke="#00f0ff" stroke-width="1.4" stroke-dasharray="6 5"/>
-            <circle class="arc-mid" cx="24" cy="24" r="12.5" fill="none" stroke="#67e8f9" stroke-width="1" stroke-dasharray="20 8"/>
-            <g class="arc-gear">
-              <circle cx="24" cy="24" r="8.5" fill="none" stroke="rgba(0,240,255,0.85)" stroke-width="1.6" stroke-dasharray="3.5 4"/>
-            </g>
-            <circle class="arc-heart" cx="24" cy="24" r="4.6" fill="#e8fdff"/>
-          </svg>
-        </span>
+        <span class="nova-mark" id="brand-mark" aria-hidden="true"></span>
         <span class="brand-name">Nova</span>
         <span class="mode-chip" id="mode-chip">Chat</span>
       </div>
       <div class="top-actions">
-        <span id="hud-telemetry" class="hud-telemetry" title="Live system telemetry">
-          <span class="tel-item" id="tel-lat">-- ms</span>
-          <span class="tel-item" id="tel-fps">-- fps</span>
-          <span class="tel-item" id="tel-state">IDLE</span>
-        </span>
         <span id="net-dot" class="net-dot" title="Online"></span>
-        <button id="btn-settings" class="icon-btn" aria-label="Settings">⚙️</button>
+        <button id="btn-theme" class="icon-btn" aria-label="Switch theme" title="Switch theme"></button>
+        <button id="btn-settings" class="icon-btn" aria-label="Open settings" title="Settings">        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>
+              </button>
       </div>
     </header>
 
-    <div class="body">
-      <aside id="sidebar" class="sidebar">
+    <div class="shell">
+      <aside id="sidebar" class="sidebar" aria-label="Navigation">
+        <div class="side-head">
+          <span class="side-brand"><span class="nova-mark sm" aria-hidden="true"></span> Nova</span>
+          <span class="side-sp"></span>
+          <button id="btn-side-close" class="icon-btn" aria-label="Close menu" style="display:none">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <button id="btn-new-2" class="btn-new-chat">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          New chat
+        </button>
+        <label class="side-search">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="side-search" type="text" placeholder="Search chats" aria-label="Search chats" />
+        </label>
+        <div class="side-section side-grow">
+          <div id="history" class="history" role="list"></div>
+        </div>
         <div class="side-section">
-          <button id="btn-new-2" class="side-action">✨ New chat</button>
-          <button id="btn-home-3" class="side-action">⌂ Home</button>
+          <div class="side-title">Workspace</div>
+          <button class="side-item" id="nav-notes"><span class="si-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h9l5 5v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M8 13h8M8 17h5"/></svg></span> Notes</button>
         </div>
         <div class="side-section">
           <div class="side-title">Modes</div>
-          <button class="mode-btn active" data-mode="chat"><span class="m-ic">◈</span> Chat</button>
-          <button class="mode-btn" data-mode="study"><span class="m-ic">◇</span> Study</button>
-          <button class="mode-btn" data-mode="exam"><span class="m-ic">◎</span> Exam prep</button>
-          <button class="mode-btn" data-mode="homework"><span class="m-ic">○</span> Homework</button>
-        </div>
-        <div class="side-section hidden">
-          <div class="side-title">Quick actions</div>
-          <button class="quick-btn" data-fill="quiz me on ">❓ Quiz me</button>
-          <button class="quick-btn" data-fill="flashcards on ">🃏 Flashcards</button>
-          <button class="quick-btn" data-fill="summarize ">🧾 Summarize</button>
-          <button class="quick-btn" data-fill="note ">🗒️ Take a note</button>
-          <button class="quick-btn" data-fill="notes">🗂️ My notes</button>
-          <button class="quick-btn" data-fill="whatsapp ">🟢 WhatsApp</button>
-          <button class="quick-btn" data-fill="email ">✉️ Email</button>
-          <button class="quick-btn" data-fill="help">🧭 Help</button>
-        </div>
-        <div class="side-section grow">
-          <div class="side-title">History</div>
-          <div id="history" class="history"></div>
+          <button class="side-item" data-mode="chat"><span class="si-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H4l2.4-2.4A8 8 0 1 1 21 12z"/></svg></span> Chat</button>
+          <button class="side-item" data-mode="study"><span class="si-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V6a2 2 0 0 1 2-2h5v16H6a2 2 0 0 0-2 2z"/><path d="M20 19V6a2 2 0 0 0-2-2h-5v16h5a2 2 0 0 1 2 2z"/></svg></span> Study</button>
+          <button class="side-item" data-mode="exam"><span class="si-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/></svg></span> Exam prep</button>
+          <button class="side-item" data-mode="homework"><span class="si-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M9 13h6M9 17h4"/></svg></span> Homework</button>
         </div>
         <div class="side-footer">
           <div id="queue-info" class="queue-info hidden"></div>
-          <button id="btn-install" class="install-btn hidden">📲 Install app</button>
+          <button class="side-foot-row" id="nav-palette"><span class="si-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg></span> Quick actions <span class="si-kbd">Ctrl K</span></button>
+          <button class="side-foot-row" id="nav-settings-foot"><span class="si-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg></span> Settings</button>
+          <button id="btn-install" class="btn-primary install-btn hidden">Install app</button>
         </div>
       </aside>
       <div id="scrim" class="scrim"></div>
 
-
-      <main class="chat">
+      <main class="main">
         <div id="messages" class="messages"></div>
         <div id="home" class="home hidden">
-          <div class="greet">
-            <h1 class="rise rise-2 kinetic-headline" aria-label="What are we working on?"><span class="k-word">What</span> <span class="k-word">are</span> <span class="k-word">we</span> <span class="k-word grad-word">working</span> <span class="k-word">on?</span></h1>
-            <div class="greet-sub rise rise-3">Ask anything, or start typing — Nova picks up the rest</div>
+          <div class="home-top">
+            <span></span>
+            <div class="home-top-right">
+              <button id="btn-theme-2" class="icon-btn" aria-label="Switch theme" title="Switch theme"></button>
+              <button id="btn-settings-2" class="icon-btn" aria-label="Open settings" title="Settings">
+                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="home-title">
+            <span class="nova-mark" aria-hidden="true"></span>
+            <span id="home-greet">What can I help you with?</span>
           </div>
           <div id="home-slot" class="home-slot"></div>
-          <div class="chips">
-            <button class="chip" data-chip="write">✍️ Help me write</button>
-            <button class="chip" data-chip="learn">📚 Learn about</button>
-            <button class="chip" data-chip="image">🖼️ Analyze image</button>
-            <button class="chip" data-chip="summarize">🧾 Summarize text</button>
-            <button class="chip" data-chip="more">＋ More</button>
+          <div class="chips" id="home-chips">
+            <button class="chip" data-chip="write"><span class="ci-ic"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span> Help me write</button>
+            <button class="chip" data-chip="learn"><span class="ci-ic"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V6a2 2 0 0 1 2-2h5v16H6a2 2 0 0 0-2 2z"/><path d="M20 19V6a2 2 0 0 0-2-2h-5v16h5a2 2 0 0 1 2 2z"/></svg></span> Explain a topic</button>
+            <button class="chip" data-chip="image"><span class="ci-ic"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg></span> Analyze image</button>
+            <button class="chip" data-chip="summarize"><span class="ci-ic"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg></span> Summarize text</button>
+            <button class="chip" data-chip="more"><span class="ci-ic"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span> More</button>
           </div>
         </div>
         <div class="composer">
           <div id="listen-banner" class="listen-banner hidden">
-            <span class="pulse"></span> Hands-free listening — say “<span id="wake-name">Nova</span>, …”
+            <span class="pulse"></span> Hands-free — say “<span id="wake-name">Nova</span>, …”
             <button id="btn-listen-stop" class="link-btn">stop</button>
           </div>
-          <div id="attachments" class="attachments hidden"></div>
-          <div class="composer-row">
-            <textarea id="input" rows="1" placeholder="Ask Nova anything…"></textarea>
-            <div class="composer-tools">
-              <div class="attach-wrap">
-                <button id="btn-attach" class="tool-btn" aria-label="Attach files, photos or folders" title="Attach">＋</button>
-                <div id="attach-menu" class="attach-menu hidden">
-                  <button data-attach="photos">🖼️ Photos</button>
-                  <button data-attach="camera">📷 Camera</button>
-                  <button data-attach="docs">📄 Documents</button>
-                  <button data-attach="folder">🗂️ Folder</button>
+          <div class="composer-inner">
+            <div id="attachments" class="attachments hidden"></div>
+            <div class="composer-row">
+              <textarea id="input" rows="1" placeholder="Ask Nova anything…" aria-label="Message Nova"></textarea>
+              <div class="composer-tools">
+                <div class="attach-wrap">
+                  <button id="btn-attach" class="tool-btn" aria-label="Attach files" title="Attach">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                  </button>
+                  <div id="attach-menu" class="attach-menu hidden">
+                    <button data-attach="photos">Photos</button>
+                    <button data-attach="camera">Camera</button>
+                    <button data-attach="docs">Documents</button>
+                    <button data-attach="folder">Folder</button>
+                  </div>
                 </div>
+                <button id="btn-mic" class="tool-btn mic" aria-label="Voice input" title="Voice input">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><path d="M12 18v4"/></svg>
+                </button>
+                <span class="flex-sp" style="flex:1"></span>
+                <button id="btn-send" class="send-btn" aria-label="Send message" title="Send">
+                  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6"/><path d="M6 12l6-6 6 6"/></svg>
+                </button>
               </div>
-              <button id="btn-mic" class="tool-btn mic" aria-label="Voice input" title="Voice input">
-                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><path d="M12 18v4"/></svg>
-              </button>
-              <span class="flex-sp"></span>
-              <button id="btn-send" class="send-btn" aria-label="Send" title="Send">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6"/><path d="M6 12l6-6 6 6"/></svg>
-              </button>
             </div>
           </div>
-          <div id="wave" class="wave hidden">
+          <div id="wave" class="hidden">
             <div class="wave-bars" id="wave-bars"></div>
             <button type="button" class="wave-text" id="wave-text" title="Tap to end voice chat">Listening…</button>
           </div>
@@ -161,99 +153,379 @@
         </div>
       </main>
     </div>
+
+    <nav class="bottom-nav" aria-label="Primary">
+      <button class="bn-btn" data-nav="home" aria-label="Home">
+        <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
+        <span>Home</span>
+      </button>
+      <button class="bn-btn" data-nav="chats" aria-label="Chats">
+        <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H4l2.4-2.4A8 8 0 1 1 21 12z"/></svg>
+        <span>Chats</span>
+      </button>
+      <button class="bn-btn fab" data-nav="new" aria-label="New chat">
+        <span class="bn-fab"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+        <span>New</span>
+      </button>
+      <button class="bn-btn" data-nav="notes" aria-label="Notes">
+        <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h9l5 5v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M8 13h8M8 17h5"/></svg>
+        <span>Notes</span>
+      </button>
+      <button class="bn-btn" data-nav="settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
   </div>
 
-  <!-- Settings -->
-  <div id="settings-modal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head">
-        <h2>Settings</h2>
-        <button id="btn-close-settings" class="icon-btn" aria-label="Close">✕</button>
+  <!-- Command palette -->
+  <div id="palette" class="hidden" role="dialog" aria-label="Command palette">
+    <div class="palette-card">
+      <div class="palette-input-row">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="palette-input" type="text" placeholder="Search or run a command…" aria-label="Search or run a command" autocomplete="off" />
+        <span class="pi-hint" style="border:1px solid var(--border);border-radius:5px;padding:1px 5px;font-size:10px;color:var(--text-3)">Esc</span>
       </div>
-      <div class="modal-body">
-        <div class="settings-note">All models are ready — keys are built in. Pick a brain from the composer menu (◇ button) or below.</div>
-        <label class="field" id="field-model">
-          <span>Model</span>
-          <select id="set-model"></select>
+      <div id="palette-list" class="palette-list" role="listbox"></div>
+    </div>
+  </div>
+
+  <!-- Chats sheet (mobile) -->
+  <div id="chats-sheet" class="sheet hidden">
+    <div class="sheet-card">
+      <div class="sheet-head">
+        <h3>Chats</h3>
+        <button id="btn-close-chats" class="icon-btn" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="sheet-body">
+        <label class="side-search" style="margin:0 4px 8px">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="sheet-search" type="text" placeholder="Search chats" aria-label="Search chats" />
         </label>
-        <label class="field">
-          <span>Call me… (wake name)</span>
-          <input id="set-nickname" type="text" placeholder="Nova" maxlength="20" />
-        </label>
-        <label class="field row">
-          <input id="set-autospeak" type="checkbox" />
-          <span>Speak replies out loud</span>
-        </label>
-        <label class="field row">
-          <input id="set-study-strict" type="checkbox" />
-          <span>Study mode: quiz me strictly (no direct answers)</span>
-        </label>
-        <label class="field">
-          <span>🧠 What Nova knows about you (one fact per line)</span>
-          <textarea id="set-memory" rows="6" placeholder="Name: Ali&#10;City: Lahore&#10;College: NUST&#10;Best friend: Ahmed"></textarea>
-          <small>Say “remember…” / “forget…” in chat, or edit here. Synced across your devices.</small>
-          <button id="btn-about-template" class="model-dd-btn" type="button">📋 Fill the about-me list for me</button>
-        </label>
-        <label class="field row">
-          <input id="set-handsfree" type="checkbox" />
-          <span>🎙️ Always-on hands-free — say “<span id="hf-nick">Nova</span>” anywhere to wake me</span>
-        </label>
-        <div class="field sync-box">
-          <span>🖥️ <b>Your devices</b> — every device that unlocked Nova</span>
-          <div id="devices-list" class="dev-list"><div class="dev-row muted">open settings to refresh</div></div>
-          <small>Each device shows its name & IP. The ✕ removes its access — it must enter the passcode again.</small>
-        </div>
-        <div class="field sync-box">
-          <span>☁️ <b>Sync phone ↔ laptop</b> — one brain everywhere</span>
-          <div class="sync-row">
-            <input id="set-sync-code" type="text" maxlength="8" placeholder="CODE" autocomplete="off" />
-            <button id="btn-sync-connect" class="primary-btn sync-btn" type="button">Connect</button>
-          </div>
-          <div class="sync-row">
-            <button id="btn-sync-now" class="model-dd-btn" type="button">⇅ Sync now</button>
-            <span id="sync-status" class="sync-status"></span>
-          </div>
-          <small>Same code on every device = shared chats, notes & memory. Any 4–8 letters (e.g. <b>ALI-2026</b>).</small>
-        </div>
-        <div class="modal-foot">
-          <button id="btn-wipe" class="danger-btn">Erase all data</button>
-          <button id="btn-save-settings" class="primary-btn">Save</button>
-        </div>
+        <div id="sheet-history" class="history"></div>
       </div>
     </div>
   </div>
 
-  <!-- Private-mode lock screen (shown only on hosted deployments) -->
+  <!-- Settings — organized pages -->
+  <div id="settings-modal" class="modal hidden" role="dialog" aria-label="Settings">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Settings</h2>
+        <button id="btn-close-settings" class="icon-btn" aria-label="Close settings">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="settings-layout">
+        <div class="settings-nav" role="tablist">
+          <button data-page="general" class="active"><span class="sn-ic"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4l2.5 2.5"/></svg></span> General</button>
+          <button data-page="voice"><span class="sn-ic"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><path d="M12 18v4"/></svg></span> Voice</button>
+          <button data-page="intelligence"><span class="sn-ic"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a4 4 0 0 0-4 4v1a4 4 0 0 0-2 7 4 4 0 0 0 3 6h6a4 4 0 0 0 3-6 4 4 0 0 0-2-7V7a4 4 0 0 0-4-4z"/></svg></span> Intelligence</button>
+          <button data-page="devices"><span class="sn-ic"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span> Devices</button>
+          <button data-page="privacy"><span class="sn-ic"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 7.4-7 9-4-1.6-7-4.6-7-9V6z"/><path d="M9.5 12l2 2 3.5-4"/></svg></span> Privacy</button>
+          <button data-page="connections"><span class="sn-ic"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12h6M12 9v6"/><circle cx="12" cy="12" r="9"/></svg></span> Connections</button>
+          <button data-page="performance"><span class="sn-ic"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg></span> Performance</button>
+          <button data-page="diagnostics"><span class="sn-ic"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3"/></svg></span> Diagnostics</button>
+        </div>
+        <div class="settings-pages">
+          <!-- General -->
+          <div class="settings-page" data-page="general">
+            <h3>General</h3>
+            <p class="page-sub">Basics — how Nova looks and greets you.</p>
+            <div class="settings-section">
+              <div class="sec-title">Appearance</div>
+              <div class="field row">
+                <span>Theme</span>
+                <select id="set-theme">
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                  <option value="system">Match system</option>
+                </select>
+              </div>
+            </div>
+            <div class="settings-section">
+              <div class="sec-title">Personal</div>
+              <label class="field">
+                <span>What should Nova call you? (wake name)</span>
+                <input id="set-nickname" type="text" placeholder="Nova" maxlength="20" />
+                <small>Voice wake word too — “Hey <span id="hf-nick">Nova</span>…”</small>
+              </label>
+            </div>
+          </div>
+
+          <!-- Voice -->
+          <div class="settings-page hidden" data-page="voice">
+            <h3>Voice</h3>
+            <p class="page-sub">Talking and listening.</p>
+            <div class="settings-section">
+              <div class="sec-title">Speaking</div>
+              <label class="field row">
+                <span>Speak replies out loud</span>
+                <label class="switch"><input id="set-autospeak" type="checkbox" /><span class="track"></span></label>
+              </label>
+            </div>
+            <div class="settings-section">
+              <div class="sec-title">Hands-free</div>
+              <label class="field row">
+                <span>Always-on listening — say “<span id="hf-nick2">Nova</span>” anywhere to wake me</span>
+                <label class="switch"><input id="set-handsfree" type="checkbox" /><span class="track"></span></label>
+              </label>
+              <small style="color:var(--text-3)">Keeps the mic open. Nova pauses itself while speaking so it never hears its own voice.</small>
+            </div>
+          </div>
+
+          <!-- Intelligence -->
+          <div class="settings-page hidden" data-page="intelligence">
+            <h3>Intelligence</h3>
+            <p class="page-sub">Which brain answers, and what it remembers.</p>
+            <div class="settings-section">
+              <div class="sec-title">Model</div>
+              <label class="field">
+                <span>Default model</span>
+                <select id="set-model"></select>
+                <small>Recommended: leave the default. Change brains anytime from the button under the composer.</small>
+              </label>
+            </div>
+            <div class="settings-section">
+              <div class="sec-title">Study</div>
+              <label class="field row">
+                <span>Study mode: quiz me strictly (no direct answers)</span>
+                <label class="switch"><input id="set-study-strict" type="checkbox" /><span class="track"></span></label>
+              </label>
+            </div>
+            <div class="settings-section">
+              <div class="sec-title">Nova Memory</div>
+              <p class="sec-desc">Nova can remember things you choose to share, so conversations feel more personal. Say “remember…” or “forget…” in chat, or edit below.</p>
+              <label class="field">
+                <textarea id="set-memory" rows="6" placeholder="Name: Ali&#10;City: Lahore&#10;College: NUST"></textarea>
+                <button id="btn-about-template" class="btn-ghost" type="button" style="align-self:flex-start">Fill the about-me template</button>
+              </label>
+            </div>
+          </div>
+
+          <!-- Devices -->
+          <div class="settings-page hidden" data-page="devices">
+            <h3>Devices</h3>
+            <p class="page-sub">Everything connected to this Nova.</p>
+            <div class="settings-section">
+              <div class="sec-title">Your devices</div>
+              <p class="sec-desc">Every device that unlocked Nova. The ✕ removes its access — it must enter the passcode again.</p>
+              <div id="devices-list" class="dev-list"><div class="dev-row muted">Open settings to refresh</div></div>
+            </div>
+            <div class="settings-section">
+              <div class="sec-title">Sync phone ↔ laptop</div>
+              <p class="sec-desc">One sync code = shared chats, notes and memory. Use the same code on every device.</p>
+              <div class="sync-box">
+                <div class="sync-row">
+                  <input id="set-sync-code" type="text" maxlength="8" placeholder="CODE" autocomplete="off" aria-label="Sync code" />
+                  <button id="btn-sync-connect" class="btn-primary sync-btn" type="button">Connect</button>
+                </div>
+                <div class="sync-row">
+                  <button id="btn-sync-now" class="btn-ghost" type="button">Sync now</button>
+                  <span id="sync-status" class="sync-status"></span>
+                </div>
+                <small style="color:var(--text-3)">Any 4–8 letters or digits, e.g. <b>ALI-2026</b>.</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Connections & Permissions — honest states only -->
+          <div class="settings-page hidden" data-page="connections">
+            <h3>Connections</h3>
+            <p class="page-sub">What Nova is allowed to reach. Nothing here is pretend — a service is either connected or it isn't.</p>
+            <div class="settings-section">
+              <div class="conn-row">
+                <span class="conn-dot ok"></span>
+                <div class="dev-name"><span>Nova Agent (this laptop)</span><small id="conn-agent-sub">Checking…</small></div>
+                <span class="conn-state ok" id="conn-agent-state">—</span>
+              </div>
+              <div class="conn-row">
+                <span class="conn-dot off"></span>
+                <div class="dev-name"><span>Gmail</span><small>Read, draft & send with your approval — via official Google sign-in</small></div>
+                <span class="conn-state">Not connected</span>
+              </div>
+              <p class="sec-desc" style="margin-top:8px">Gmail needs a small server-side Google app (OAuth) before it can connect — it's on the roadmap and will appear here as a real <b>Connect</b> button once live. Nova will never ask for your Gmail password.</p>
+            </div>
+            <div class="settings-section">
+              <div class="sec-title">How actions are approved</div>
+              <p class="sec-desc">Opening apps, searching files and reading system stats run immediately on a connected device. Anything that leaves your account — sending a message or email, deleting files — always shows you exactly what will happen and waits for your confirmation.</p>
+            </div>
+          </div>
+
+          <!-- Performance — only appears with real data from a connected agent -->
+          <div class="settings-page hidden" data-page="performance">
+            <h3>Performance</h3>
+            <p class="page-sub">Live readings from this laptop's Nova Agent. Nothing is estimated.</p>
+            <div class="settings-section">
+              <div id="perf-body" class="dev-list"><div class="dev-row muted">Requires the Nova Agent — start it with <b>python serve.py</b> on the laptop, or open Nova there.</div></div>
+              <button id="btn-perf-refresh" class="btn-ghost" type="button" style="align-self:flex-start">Refresh</button>
+            </div>
+          </div>
+
+          <!-- Diagnostics — developer info lives here, nowhere else -->
+          <div class="settings-page hidden" data-page="diagnostics">
+            <h3>Diagnostics</h3>
+            <p class="page-sub">Technical details, for when something needs investigating.</p>
+            <div class="settings-section">
+              <div class="field"><span>Current brain</span><small id="diag-brain">—</small></div>
+              <div class="field"><span>Last AI request</span><small id="diag-latency">—</small></div>
+              <div class="field"><span>Nova Agent</span><small id="diag-agent">—</small></div>
+              <div class="field"><span>Sync</span><small id="diag-sync">—</small></div>
+              <div class="field"><span>Voice engine</span><small id="diag-voice">—</small></div>
+              <div class="field"><span>App version</span><small>nova-v25 · PWA · offline-capable</small></div>
+            </div>
+          </div>
+
+          <!-- Privacy -->
+          <div class="settings-page hidden" data-page="privacy">
+            <h3>Privacy</h3>
+            <p class="page-sub">You're in control of your data.</p>
+            <div class="settings-section">
+              <div class="sec-title">Where your data lives</div>
+              <p class="sec-desc">Chats, notes and memory are stored on this device and synced only to devices paired with your sync code. Voice is processed by your browser's speech service; messages are sent to the AI model you pick to generate replies. Nothing is sold, nothing is shared.</p>
+            </div>
+            <div class="settings-section">
+              <div class="sec-title">Nova Memory</div>
+              <p class="sec-desc">Memory makes Nova personal — and you can clear it anytime.</p>
+              <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+                <button id="btn-clear-memory" class="btn-danger-ghost" type="button">Clear memory</button>
+              </div>
+            </div>
+            <div class="settings-section">
+              <div class="sec-title">Sign out other devices</div>
+              <p class="sec-desc">Removed devices must enter the passcode again. Manage them on the Devices page.</p>
+            </div>
+            <div class="settings-section">
+              <div class="danger-zone">
+                <div class="sec-title">Danger zone</div>
+                <p>Erase every chat, note, flashcard, memory and setting on this device. This cannot be undone.</p>
+                <div class="row">
+                  <button id="btn-wipe" class="btn-danger-solid" type="button">Erase all data…</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="btn-save-settings" class="btn-primary">Save changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notes workspace -->
+  <div id="notes-modal" class="modal hidden" role="dialog" aria-label="Notes">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Notes</h2>
+        <button id="btn-close-notes" class="icon-btn" aria-label="Close notes">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <textarea id="note-input" rows="2" placeholder="Write a note… (or just tell Nova “note …” in chat)"></textarea>
+          <button id="btn-note-save" class="btn-primary" type="button" style="align-self:flex-start">Save note</button>
+        </div>
+        <label class="side-search" style="margin:0">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="notes-search" type="text" placeholder="Search notes" aria-label="Search notes" />
+        </label>
+        <div id="notes-list" class="dev-list"><div class="dev-row muted">No notes yet. Create your first note above — or say “note …” in chat.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Erase-all confirmation -->
+  <div id="wipe-modal" class="modal hidden" role="alertdialog" aria-label="Erase all data">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Erase all data?</h2>
+        <button id="btn-wipe-cancel" class="icon-btn" aria-label="Cancel">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0;color:var(--text-2);font-size:14px">This erases every chat, note, flashcard, memory and setting on this device. It cannot be undone.</p>
+        <label class="field">
+          <span>Type <b>ERASE</b> to confirm</span>
+          <input id="wipe-confirm-input" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button id="btn-wipe-cancel-2" class="btn-ghost" type="button">Cancel</button>
+        <button id="btn-wipe-confirm" class="btn-danger-solid" type="button" disabled>Erase everything</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- File results (agent search) -->
+  <div id="files-modal" class="modal hidden" role="dialog" aria-label="File search results">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Files on this laptop</h2>
+        <button id="btn-close-files" class="icon-btn" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div id="files-list" class="dev-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic typed-confirmation dialog -->
+  <div id="confirm-modal" class="modal hidden" role="alertdialog" aria-label="Confirm action">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="confirm-title">Are you sure?</h2>
+        <button id="confirm-cancel" class="icon-btn" aria-label="Cancel">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-text" style="margin:0;color:var(--text-2);font-size:14px"></p>
+        <label class="field">
+          <span>Type <b>YES</b> to confirm</span>
+          <input id="confirm-input" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button id="confirm-cancel-2" class="btn-ghost" type="button">Cancel</button>
+        <button id="confirm-go" class="btn-danger-solid" type="button" disabled>Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Private-mode lock screen (hosted deploys) -->
   <div id="lock" class="lock hidden">
     <div class="lock-card">
-      <div class="lock-orb" aria-hidden="true"></div>
+      <div class="lock-orb"><span class="nova-mark lg" aria-hidden="true"></span></div>
       <h1 class="lock-title">Private Nova</h1>
       <p class="lock-sub" id="lock-hint">Enter your passcode to continue</p>
-      <input id="lock-pass" type="password" autocomplete="current-password" placeholder="Passcode" />
-      <button id="lock-go" class="lock-btn">Unlock</button>
+      <input id="lock-pass" type="password" autocomplete="current-password" placeholder="Passcode" aria-label="Passcode" />
+      <button id="lock-go" class="btn-primary lock-btn">Unlock</button>
       <div id="lock-err" class="lock-err"></div>
     </div>
   </div>
 
-  <!-- JARVIS Mode — full-screen voice HUD -->
-  <div id="jarvis" class="jarvis hidden" role="dialog" aria-label="JARVIS voice mode">
-    <div class="jarvis-vignette"></div>
-    <button id="jarvis-exit" class="jarvis-exit" aria-label="Exit JARVIS mode">Exit</button>
-    <div class="jarvis-stage">
-      <canvas id="jarvis-orb" width="520" height="520" aria-hidden="true"></canvas>
-      <div class="jarvis-ripples" id="jarvis-ripples"></div>
-    </div>
-    <div class="jarvis-status"><span class="js-dot"></span><span id="jarvis-status-text">Listening</span></div>
-    <div class="jarvis-transcript" id="jarvis-transcript"></div>
-    <div class="jarvis-telemetry">
-      <div class="jt-cell"><span class="jt-k">INPUT</span><span class="jt-v" id="jt-db">-∞ dB</span></div>
-      <div class="jt-cell"><span class="jt-k">PEAK</span><span class="jt-v" id="jt-peak">0 Hz</span></div>
-      <div class="jt-cell"><span class="jt-k">LATENCY</span><span class="jt-v" id="jt-lat">-- ms</span></div>
-      <div class="jt-cell"><span class="jt-k">DEVICES</span><span class="jt-v" id="jt-dev">1</span></div>
+  <!-- Voice mode — mic-activated Nova experience -->
+  <div id="jarvis" class="hidden" role="dialog" aria-modal="true" aria-label="Nova voice">
+    <div class="jarvis-backdrop"></div>
+    <button id="jarvis-exit" class="jarvis-exit">Close</button>
+    <div class="jarvis-panel">
+      <canvas id="jarvis-viz" class="jarvis-viz" width="520" height="520" aria-hidden="true"></canvas>
+      <div class="jarvis-word">Nova</div>
+      <div class="jarvis-state" id="jarvis-state">Preparing…</div>
+      <div class="jarvis-heard" id="jarvis-heard"></div>
+      <div class="jarvis-hint">Speak naturally — or say “<span id="jarvis-nick">Nova</span>, …”</div>
     </div>
   </div>
 
-  <div id="toasts" class="toasts"></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
 
   <script src="bgfx.js"></script>
   <script src="app.js"></script>

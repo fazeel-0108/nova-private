@@ -134,10 +134,210 @@ def _act_screenshot(_):
     return {"image": "data:image/png;base64," + b64[:6_000_000]}
 
 
+# ---------------- Nova Agent v2: system stats · storage · safe cleanup · file search ----------------
+# Safe, read-mostly, allowlisted local capabilities. Destructive cleanup only
+# touches well-known temp/cache locations, only when explicitly requested.
+
+_TEMP_DIRS = [
+    os.environ.get("TEMP", ""), os.environ.get("TMP", ""),
+    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Temp") if os.environ.get("LOCALAPPDATA") else "",
+]
+_TEMP_DIRS = [d for d in _TEMP_DIRS if d and os.path.isdir(d)]
+
+
+def _ps(cmd, timeout=25):
+    """Run a read-only PowerShell probe, return stdout text (or None)."""
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-c", cmd], capture_output=True, timeout=timeout)
+        return r.stdout.decode(errors="replace").strip()
+    except Exception:
+        return None
+
+
+def _act_stats(_):
+    """Real CPU / RAM / GPU / battery / uptime readout (no fabrication)."""
+    out = {}
+    cpu = _ps("(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average")
+    if cpu and cpu.replace(".", "").isdigit():
+        out["cpu"] = float(cpu)
+    ram = _ps("$o=Get-CimInstance Win32_OperatingSystem; [math]::Round(($o.TotalVisibleMemorySize-$o.FreePhysicalMemory)/1MB,1); $t=[math]::Round($o.TotalVisibleMemorySize/1MB,1)")
+    if ram:
+        lines = [l for l in ram.splitlines() if l.strip()]
+        if len(lines) >= 2:
+            out["ramUsedGb"], out["ramTotalGb"] = lines[0], lines[1]
+    gpu = _ps("(Get-CimInstance Win32_VideoController | ForEach-Object {$_.Name}) -join ' | '")
+    if gpu:
+        out["gpuName"] = gpu[:120]
+    gpu_load = _ps("(Get-Counter '\\GPU Engine(*)\\Utilization Percentage' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty CounterSamples | Measure-Object -Property CookedValue -Average).Average")
+    if gpu_load:
+        try:
+            out["gpuLoad"] = round(float(gpu_load), 1)
+        except ValueError:
+            pass
+    bat = _ps("(Get-CimInstance Win32_Battery).EstimatedChargeRemaining")
+    if bat and bat.replace(".", "").isdigit():
+        out["battery"] = float(bat)
+    up = _ps("(Get-CimInstance Win32_OperatingSystem).LastBootUpTime")
+    if up:
+        out["bootedAt"] = up[:19]
+    procs = _ps("(Get-Process).Count")
+    if procs and procs.isdigit():
+        out["processes"] = int(procs)
+    out["ok"] = bool(out)
+    return out
+
+
+def _act_storage(_):
+    """Disk usage + the biggest folders in the user profile (real numbers)."""
+    disks = _ps("Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | ForEach-Object { $_.DeviceID + '|' + [math]::Round($_.Size/1GB,0) + '|' + [math]::Round(($_.Size-$_.FreeSpace)/1GB,0) }")
+    disk_list = []
+    if disks:
+        for line in disks.splitlines():
+            parts = line.split("|")
+            if len(parts) == 3:
+                disk_list.append({"drive": parts[0], "totalGb": parts[1], "usedGb": parts[2]})
+    top = []
+    home = os.path.expanduser("~")
+    folders = ["Downloads", "Videos", "Documents", "Desktop", "Pictures", "AppData\\Local\\Temp"]
+    sizes = _ps(
+        "$folders = @('Downloads','Videos','Documents','Desktop','Pictures'); "
+        "foreach($f in $folders){ $p=Join-Path $env:USERPROFILE $f; if(Test-Path $p){ "
+        "$s=(Get-ChildItem $p -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum; "
+        "$f + '|' + [math]::Round($s/1GB,1) } }", timeout=90)
+    if sizes:
+        for line in sizes.splitlines():
+            parts = line.split("|")
+            if len(parts) == 2:
+                top.append({"folder": parts[0], "gb": parts[1]})
+    tmp_gb = 0.0
+    for d in _TEMP_DIRS:
+        try:
+            total = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(d, onerror=lambda e: None) for f in fs)
+            tmp_gb += total / (1024 ** 3)
+        except Exception:
+            pass
+    return {"ok": True, "disks": disk_list, "topFolders": top[:8], "tempGb": round(tmp_gb, 2)}
+
+
+def _dir_size_gb(path):
+    total = 0
+    try:
+        for r, _, fs in os.walk(path, onerror=lambda e: None):
+            for f in fs:
+                try:
+                    total += os.path.getsize(os.path.join(r, f))
+                except OSError:
+                    pass
+    except Exception:
+        pass
+    return total / (1024 ** 3)
+
+
+def _act_cleanup_preview(_):
+    """Preview ONLY: what could be cleaned, per safe category. Deletes nothing."""
+    seen = set()
+    cats = []
+    for d in _TEMP_DIRS:
+        norm = os.path.normcase(os.path.normpath(d))
+        if norm in seen:
+            continue
+        seen.add(norm)
+        gb = _dir_size_gb(d)
+        if gb > 0.01:
+            n = sum(len(fs) for _, _, fs in os.walk(d, onerror=lambda e: None))
+            cats.append({"label": "Temporary files — " + d, "gb": round(gb, 2), "files": n, "path": d})
+    return {"ok": True, "categories": cats}
+
+
+def _act_cleanup(arg):
+    """Clean ONE allowlisted temp directory (arg must exactly match a safe path).
+    Files older than 1 day only; anything locked is skipped. Never recurses
+    beyond the allowlisted dir. Returns real freed bytes."""
+    target = str(arg or "").strip()
+    if not target or target not in _TEMP_DIRS:
+        return {"ok": False, "error": "path not allowlisted"}
+    freed = 0
+    files = 0
+    cutoff = time.time() - 86400  # 24h — leave anything fresh alone
+    for r, _, fs in os.walk(target, onerror=lambda e: None):
+        for f in fs:
+            p = os.path.join(r, f)
+            try:
+                st = os.stat(p)
+                if st.st_mtime > cutoff:
+                    continue
+                os.remove(p)
+                freed += st.st_size
+                files += 1
+            except OSError:
+                pass
+    return {"ok": True, "freedGb": round(freed / (1024 ** 3), 2), "freedMb": round(freed / (1024 ** 2), 1), "files": files}
+
+
+def _act_find_files(arg):
+    """Search the user profile for filenames matching a query (top 20 hits).
+    Read-only. arg: {q: query, folder: optional subdir} or a plain string."""
+    if isinstance(arg, dict):
+        q = str(arg.get("q", "")).strip().lower()
+        sub = str(arg.get("folder", "")).strip()
+    else:
+        q = str(arg or "").strip().lower()
+        sub = ""
+    if len(q) < 2:
+        return {"ok": False, "error": "query too short"}
+    base = os.path.join(os.path.expanduser("~"), sub) if sub and not sub.startswith(("/", "\\")) else (sub if sub else os.path.expanduser("~"))
+    if not os.path.isdir(base):
+        return {"ok": False, "error": "folder not found"}
+    skip_dirs = {"AppData", "Application Data", "$Recycle.Bin", "node_modules", ".git", "Cache", "Caches"}
+    hits = []
+    try:
+        for r, dirs, fs in os.walk(base, onerror=lambda e: None):
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            for f in fs:
+                if q in f.lower():
+                    p = os.path.join(r, f)
+                    try:
+                        st = os.stat(p)
+                        hits.append({"name": f, "path": p,
+                                     "sizeMb": round(st.st_size / (1024 ** 2), 1),
+                                     "modified": int(st.st_mtime * 1000)})
+                    except OSError:
+                        pass
+                    if len(hits) >= 20:
+                        raise StopIteration
+    except StopIteration:
+        pass
+    except Exception:
+        pass
+    hits.sort(key=lambda h: -h["modified"])
+    return {"ok": True, "query": q, "base": base, "hits": hits}
+
+
+def _act_open_path(arg):
+    """Reveal one exact file/folder the agent itself found (no free-form exec)."""
+    p = str(arg or "").strip()
+    if not p.startswith(("C:\\", "D:\\", "/")) or ".." in p:
+        return {"ok": False, "error": "path refused"}
+    if not os.path.exists(p):
+        return {"ok": False, "error": "not found"}
+    try:
+        if os.path.isdir(p):
+            os.startfile(p)  # noqa: S606
+        else:
+            subprocess.Popen(["explorer", "/select,", p])
+        return {"ok": True, "result": "opened location"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)[:200]}
+
+
 ACTIONS = {
     "open": _act_open, "volume": _act_volume, "type": _act_type,
     "key": _act_key, "clipboard": _act_clipboard, "notify": _act_notify,
     "lock": _act_lock, "battery": _act_battery, "screenshot": _act_screenshot,
+    # Nova Agent v2 — read-mostly system capabilities
+    "stats": _act_stats, "storage": _act_storage,
+    "cleanup_preview": _act_cleanup_preview, "cleanup": _act_cleanup,
+    "find_files": _act_find_files, "open_path": _act_open_path,
 }
 
 
@@ -281,6 +481,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.ollama_models()
         elif parts.path.rstrip("/") == "/api/sync/events":
             self.sync_events(urllib.parse.parse_qs(parts.query))
+        elif parts.path.rstrip("/") == "/api/ping":
+            # Lightweight agent heartbeat: lets the UI show REAL agent status.
+            import platform
+            self._json(200, {"ok": True, "agent": "nova-local", "version": 2,
+                             "device": platform.node() or "laptop"})
         else:
             super().do_GET()
 

@@ -27,11 +27,12 @@ const state = {
   studyStrict: LS.get("nova.studyStrict", true),
   handsFree: LS.get("nova.handsFree", false),   // always-on wake word
   mode: LS.get("nova.mode", "chat"),
-  theme: LS.get("nova.theme", "dark"),
+  theme: LS.get("nova.theme", "system"),
   chats: LS.get("nova.chats", {}),   // { id: {id, title, mode, messages: [{role, content}], ts} }
   currentId: LS.get("nova.currentId", null),
   notes: LS.get("nova.notes", []),
   cards: LS.get("nova.cards", {}),   // { topic: [{q, a}] }
+  tasks: LS.get("nova.tasks", []),   // cross-device drafts/actions
   queued: LS.get("nova.queued", []),
   profile: LS.get("nova.profile", { name: "", facts: [], asked: false }), // things Nova knows about you
   syncCode: LS.get("nova.syncCode", ""),   // pairs laptop ↔ phone
@@ -49,6 +50,7 @@ function saveAll() {
   LS.set("nova.queued", state.queued);
   LS.set("nova.profile", state.profile);
   LS.set("nova.syncCode", state.syncCode);
+  LS.set("nova.tasks", state.tasks);
 }
 
 /* ---------------- Memory: things Nova knows about you ---------------- */
@@ -262,15 +264,14 @@ const el = {
   newChat: $("#btn-new-2"), settings: $("#btn-settings"),
   settingsModal: $("#settings-modal"), closeSettings: $("#btn-close-settings"),
   saveSettings: $("#btn-save-settings"), wipe: $("#btn-wipe"),
-  setProvider: $("#set-provider"), setKey: $("#set-key"), setModel: $("#set-model"),
-  fieldKey: $("#field-key"), fieldModel: $("#field-model"),
+  setModel: $("#set-model"),
   setNickname: $("#set-nickname"), setAutospeak: $("#set-autospeak"),
-  setStudyStrict: $("#set-study-strict"), keyHelp: $("#key-help"),
+  setStudyStrict: $("#set-study-strict"),
   history: $("#history"), install: $("#btn-install"),
   modeChip: $("#mode-chip"), netDot: $("#net-dot"),
   modelDD: $("#model-dd"), modelDDBtn: $("#model-dd-btn"), modelDDMenu: $("#model-dd-menu"),
   home: $("#home"), homeSlot: $("#home-slot"), greetNick: $(".greet-nick"), composer: $(".composer"),
-  homeContinue: null, btnHome: $("#btn-home-4") || $("#btn-home-3") || $("#btn-home-2"),
+  homeContinue: null, btnHome: null, // bottom-nav Home handler wired in wire()
   attach: $("#btn-attach"), attachMenu: $("#attach-menu"), attachTray: $("#attachments"),
   fileImg: $("#file-img"), fileCam: $("#file-cam"), fileDoc: $("#file-doc"), fileFolder: $("#file-folder"),
   wave: $("#wave"), waveBars: $("#wave-bars"), waveText: $("#wave-text"),
@@ -303,30 +304,43 @@ function celebrateFromSend() {
   else if (window.NovaFX) window.NovaFX.pulse();
 }
 
-/* Soft ripple from the click point on any .icon-btn / .send-btn / .chip */
-function addRipple(e) {
-  const btn = e.currentTarget;
-  if (!btn) return;
-  const r = btn.getBoundingClientRect();
-  const x = (e.clientX || r.left + r.width / 2) - r.left;
-  const y = (e.clientY || r.top + r.height / 2) - r.top;
-  const dot = document.createElement("span");
-  dot.className = "ripple";
-  dot.style.left = x + "px";
-  dot.style.top = y + "px";
-  btn.appendChild(dot);
-  setTimeout(() => dot.remove(), 700);
-}
-function wireRipples() {
-  document.querySelectorAll(".icon-btn, .tool-btn, .send-btn, .chip, .quick-btn, .install-btn, .primary-btn")
-    .forEach((b) => { b.classList.add("ripple-host"); b.addEventListener("pointerdown", addRipple); });
-}
+/* V2: tap ripples retired — CSS :active states give all the feedback needed. */
+function wireRipples() { /* kept as a no-op so old call sites stay harmless */ }
 
-/* Re-bind ripples after dynamic re-renders (debounced, same frame) */
-let rippleTimer = null;
-function renderRipplesSoon() {
-  if (rippleTimer) return;
-  rippleTimer = setTimeout(() => { rippleTimer = null; wireRipples(); }, 80);
+/* ---------------- Theme: dark / light / system ---------------- */
+const mediaDark = window.matchMedia("(prefers-color-scheme: dark)");
+function applyTheme() {
+  const t = state.theme === "system" ? (mediaDark.matches ? "dark" : "light") : state.theme;
+  document.documentElement.dataset.theme = t;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", t === "light" ? "#f7f7f8" : "#0b0d12");
+  updateThemeIcons();
+}
+function updateThemeIcons() {
+  const t = document.documentElement.dataset.theme;
+  const icon = t === "light"
+    ? '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6"/></svg>'
+    : '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></svg>';
+  ["#btn-theme", "#btn-theme-2"].forEach((s) => {
+    const b = $(s); if (b) b.innerHTML = icon;
+  });
+}
+function cycleTheme() {
+  const order = ["dark", "light", "system"];
+  state.theme = order[(order.indexOf(state.theme) + 1 + order.length) % order.length];
+  LS.set("nova.theme", state.theme);
+  applyTheme();
+  const sel = $("#set-theme"); if (sel) sel.value = state.theme;
+  toast("Theme: " + state.theme, "ok");
+}
+mediaDark.addEventListener("change", () => { if (state.theme === "system") applyTheme(); });
+
+/* Custom geometric Nova mark: a four-point star drawn as a path — not a
+   Unicode glyph, so it renders identically on every platform. Injected into
+   every .nova-mark placeholder. */
+const NOVA_MARK_SVG = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M12 1.6c.9 4.9 2.9 7.3 7.6 8.4.6.15.6 1.85 0 2-4.7 1.1-6.7 3.5-7.6 8.4-.15.6-1.85.6-2 0-.9-4.9-2.9-7.3-7.6-8.4-.6-.15-.6-1.85 0-2 4.7-1.1 6.7-3.5 7.6-8.4.15-.6 1.85-.6 2 0z"/><path fill="currentColor" opacity="0.75" d="M18.9 15.4c.4 2.1 1.3 3.1 3.3 3.6.3.08.3.9 0 .98-2 .5-2.9 1.5-3.3 3.6-.08.3-.9.3-.98 0-.4-2.1-1.3-3.1-3.3-3.6-.3-.08-.3-.9 0-.98 2-.5 2.9-1.5 3.3-3.6.08-.3.9-.3.98 0z"/></svg>';
+function injectNovaMarks() {
+  document.querySelectorAll(".nova-mark").forEach((n) => { if (!n.dataset.mk) { n.dataset.mk = "1"; n.innerHTML = NOVA_MARK_SVG; } });
 }
 
 function setStatus(text) {
@@ -397,6 +411,15 @@ function deleteChat(id) {
   renderMessages();
 }
 
+function togglePin(id) {
+  const c = state.chats[id];
+  if (!c) return;
+  c.pinned = !c.pinned;
+  saveAll();
+  scheduleSync();
+  renderHistory();
+}
+
 function pushMsg(role, content) {
   const chat = currentChat();
   chat.messages.push({ role, content });
@@ -418,25 +441,141 @@ function pushMsg(role, content) {
 /* ---------------- Rendering ---------------- */
 const MODE_LABELS = { chat: "Chat", study: "Study", exam: "Exam prep", homework: "Homework" };
 
-let lastChatCount = -1;
 function renderHistory() {
-  if (chatCount !== lastChatCount) { lastChatCount = chatCount; renderRipplesSoon(); }
-  el.history.innerHTML = "";
-  const chats = Object.values(state.chats).sort((a, b) => b.ts - a.ts);
-  for (const c of chats) {
+  renderHistoryInto(el.history, $("#side-search")?.value || "");
+  const sheetHist = $("#sheet-history");
+  if (sheetHist && !$("#chats-sheet").classList.contains("hidden")) {
+    renderHistoryInto(sheetHist, $("#sheet-search")?.value || "");
+  }
+}
+
+const DAY_MS = 86400000;
+function historyBucket(ts) {
+  const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
+  const t0 = startToday.getTime();
+  if (ts >= t0) return "Today";
+  if (ts >= t0 - DAY_MS) return "Yesterday";
+  if (ts >= t0 - 7 * DAY_MS) return "Previous 7 days";
+  return "Older";
+}
+
+function historyGroups(list) {
+  const groups = [];
+  for (const c of list) {
+    if (c.pinned) continue;
+    const bucket = historyBucket(c.ts || Date.now());
+    let g = groups.find((x) => x.label === bucket);
+    if (!g) { g = { label: bucket, chats: [] }; groups.push(g); }
+    g.chats.push(c);
+  }
+  return groups;
+}
+
+function renderHistoryInto(container, query) {
+  container.innerHTML = "";
+  const q = (query || "").trim().toLowerCase();
+  let list = Object.values(state.chats).filter((c) => (c.messages || []).length);
+  if (q) {
+    list = list.filter((c) =>
+      (c.title || "").toLowerCase().includes(q) ||
+      (c.messages || []).some((m) => (m.content || "").toLowerCase().includes(q))
+    ).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.ts - a.ts);
+  } else {
+    list.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.ts - a.ts);
+  }
+  if (!list.length) {
+    const empty = document.createElement("div");
+    empty.className = "side-empty";
+    empty.textContent = q ? `No chats matching “${query.trim()}”` : "Your conversations will appear here.";
+    container.appendChild(empty);
+    return;
+  }
+  const pinIcon = (filled) =>
+    `<svg viewBox="0 0 24 24" width="11" height="11" ${filled ? 'fill="currentColor"' : 'fill="none"'} stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 17v5M9 3h6l-1 7 3.5 3.5c.4.4.1 1.5-.5 1.5H7c-.6 0-.9-1.1-.5-1.5L10 10z"/></svg>`;
+  const pinBtn = (c) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.innerHTML = pinIcon(!!c.pinned);
+    b.title = c.pinned ? "Unpin" : "Pin";
+    b.setAttribute("aria-label", b.title);
+    b.onclick = (e) => { e.stopPropagation(); togglePin(c.id); };
+    return b;
+  };
+  const renameBtn = (c) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = "✎"; b.title = "Rename";
+    b.setAttribute("aria-label", "Rename chat");
+    b.onclick = (e) => { e.stopPropagation(); renameChat(c.id, container); };
+    return b;
+  };
+  const delBtn = (c) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = "✕"; b.title = "Delete";
+    b.setAttribute("aria-label", "Delete chat");
+    b.onclick = (e) => { e.stopPropagation(); deleteChat(c.id); };
+    return b;
+  };
+  const makeItem = (c) => {
     const div = document.createElement("div");
     div.className = "history-item" + (c.id === state.currentId ? " active" : "");
+    div.setAttribute("role", "listitem");
+    if (c.pinned) {
+      const pin = document.createElement("span");
+      pin.className = "h-pin"; pin.innerHTML = pinIcon(true);
+      div.appendChild(pin);
+    }
     const span = document.createElement("span");
-    span.className = "h-title";
-    span.textContent = `${c.title}`;
-    const del = document.createElement("span");
-    del.className = "del";
-    del.textContent = "✕";
-    del.onclick = (e) => { e.stopPropagation(); deleteChat(c.id); };
-    div.append(span, del);
+    span.className = "h-title"; span.textContent = c.title;
+    const actions = document.createElement("span");
+    actions.className = "h-actions";
+    actions.append(pinBtn(c), renameBtn(c), delBtn(c));
+    div.append(span, actions);
     div.onclick = () => openChat(c.id);
-    el.history.appendChild(div);
+    return div;
+  };
+  if (q) {
+    list.forEach((c) => container.appendChild(makeItem(c)));
+    return;
   }
+  const pinned = list.filter((c) => c.pinned);
+  if (pinned.length) {
+    const head = document.createElement("div");
+    head.className = "side-title"; head.textContent = "Pinned";
+    container.appendChild(head);
+    pinned.forEach((c) => container.appendChild(makeItem(c)));
+  }
+  historyGroups(list).forEach((g) => {
+    const head = document.createElement("div");
+    head.className = "side-title"; head.textContent = g.label;
+    container.appendChild(head);
+    g.chats.forEach((c) => container.appendChild(makeItem(c)));
+  });
+}
+
+function renameChat(id, container) {
+  const c = state.chats[id];
+  if (!c) return;
+  const item = (container || el.history).querySelector(".history-item.active .h-title");
+  const host = item ? item.parentElement : null;
+  if (!host) return;
+  const editor = document.createElement("span");
+  editor.className = "h-edit";
+  const inp = document.createElement("input");
+  inp.type = "text"; inp.value = c.title; inp.maxLength = 60;
+  editor.appendChild(inp);
+  host.replaceChild(editor, item);
+  inp.focus();
+  inp.select();
+  const commit = () => {
+    const v = inp.value.trim();
+    if (v) c.title = v;
+    saveAll(); scheduleSync();
+    renderHistory();
+  };
+  inp.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    else if (e.key === "Escape") { renderHistory(); }
+  };
+  inp.onblur = commit;
 }
 
 function renderMessages() {
@@ -447,7 +586,7 @@ function renderMessages() {
     const hi = document.createElement("div");
     hi.className = "msg sys";
     const knowYou = !state.profile.asked && !state.profile.name && !state.profile.facts.length;
-    hi.innerHTML = `<div class="bubble">${renderMd(
+    hi.innerHTML = `${renderMd(
       (knowYou
         ? `Hi! I'm **${state.nickname}** ✦ — your personal AI assistant. Before we dive in, **tell me about yourself** so I can actually be *yours*:\n\n` +
           `1️⃣ \`remember my name is <your name>\`\n` +
@@ -473,16 +612,24 @@ function renderMessages() {
 function addBubble(role, content, animate = true) {
   const wrap = document.createElement("div");
   wrap.className = "msg " + (role === "user" ? "user" : "ai");
-  const av = document.createElement("div");
-  av.className = "avatar";
-  av.textContent = role === "user" ? "🧑" : "✦";
-  const bub = document.createElement("div");
-  bub.className = "bubble";
-  bub.innerHTML = renderMd(content);
-  wrap.append(av, bub);
+  wrap.setAttribute("role", "listitem");
+  const meta = document.createElement("div");
+  meta.className = "msg-meta";
+  if (role === "user") {
+    meta.textContent = "You";
+  } else {
+    meta.innerHTML = '<span class="nova-mark sm" aria-hidden="true"></span>';
+    const who = document.createElement("span");
+    who.textContent = state.nickname;
+    meta.appendChild(who);
+  }
+  const body = document.createElement("div");
+  body.className = "msg-body";
+  body.innerHTML = renderMd(content);
+  wrap.append(meta, body);
   el.messages.appendChild(wrap);
   if (animate) scrollBottom();
-  return bub;
+  return body;
 }
 
 function scrollBottom() {
@@ -885,6 +1032,55 @@ const APPS = {
   amazon: "https://amazon.com", flipkart: "https://flipkart.com",
 };
 
+/* ---------------- Nova Agent: helpers ---------------- */
+async function agentStatusReply(text) {
+  const r = await actOnLaptop("stats", "");
+  if (r && r.ok) {
+    const bits = [];
+    if (r.cpu != null) bits.push(`CPU **${Math.round(r.cpu)}%**`);
+    if (r.ramTotalGb) bits.push(`RAM **${r.ramUsedGb} / ${r.ramTotalGb} GB**`);
+    if (r.gpuName) bits.push(`GPU: ${r.gpuName}${r.gpuLoad != null ? ` (${Math.round(r.gpuLoad)}%)` : ""}`);
+    if (r.battery != null) bits.push(`Battery **${Math.round(r.battery)}%**`);
+    if (r.processes) bits.push(`${r.processes} processes`);
+    const content = `💻 **Laptop status**\n${bits.join(" · ")}\n\n_Say “storage” for space, “clean temp files” to free space, or “find <file>” to search._`;
+    addBubble("ai", content);
+    pushMsg("assistant", content);
+    speak("Laptop is healthy. " + bits.slice(0, 2).join(", "));
+    return true;
+  }
+  const msg = "⚠️ The Nova Agent isn't reachable — start it on the laptop with `python serve.py`, then try again.";
+  addBubble("ai", msg); pushMsg("assistant", msg);
+  return true;
+}
+
+function renderFileResults(hits, query) {
+  const box = $("#files-list");
+  box.innerHTML = "";
+  if (!hits || !hits.length) {
+    box.innerHTML = '<div class="dev-row muted">No files matching “' + escHtml(query) + '” in your user folders.</div>';
+  } else {
+    for (const h of hits) {
+      const row = document.createElement("div");
+      row.className = "dev-row";
+      const name = document.createElement("span");
+      name.className = "dev-name";
+      const t = document.createElement("span"); t.textContent = h.name;
+      const sm = document.createElement("small"); sm.textContent = h.path;
+      name.append(t, sm);
+      const open = document.createElement("button");
+      open.className = "dev-revoke"; open.textContent = "Open"; open.title = "Show in folder";
+      open.style.width = "auto"; open.style.padding = "0 10px";
+      open.onclick = async () => {
+        const r = await actOnLaptop("open_path", h.path);
+        toast(r && r.ok ? "Opened location" : "Couldn't open that file", r && r.ok ? "ok" : "warn");
+      };
+      row.append(name, open);
+      box.appendChild(row);
+    }
+  }
+  $("#files-modal").classList.remove("hidden");
+}
+
 /* JARVIS: run an action on the laptop via the local server's actuator.
    From the phone this reaches the laptop over Wi-Fi (same origin = the laptop). */
 async function actOnLaptop(action, arg) {
@@ -986,7 +1182,7 @@ async function tryCommand(text) {
     const show = () => {
       const c = cards[i % cards.length];
       addBubble("ai", `🃏 **Q:** ${c.q}\n\n_Tap to reveal…_`);
-      const last = el.messages.lastChild.querySelector(".bubble");
+      const last = el.messages.lastChild.querySelector(".msg-body");
       last.style.cursor = "pointer";
       last.title = "Tap to reveal";
       last.onclick = () => {
@@ -1060,6 +1256,64 @@ async function tryCommand(text) {
     }
   }
 
+  /* ——— Nova Agent: system, storage, files (real, allowlisted) ——— */
+  m = t.match(/^(?:what(?:'s| is)?\s+(?:my\s+)?|show(?:\s+me)?\s+(?:my\s+)?)?(cpu|gpu|ram|memory|battery|system status|laptop status|laptop health|how is my laptop|how is my pc)\??$/i);
+  if (m) {
+    const say2 = await agentStatusReply(text);
+    if (say2) return true;
+  }
+  m = t.match(/^(storage|disk space|storage usage|check storage|show storage|what.?s taking up my storage|laptop storage)\??$/i);
+  if (m) {
+    const r = await actOnLaptop("storage", "");
+    if (!(r && r.ok)) return say("⚠️ The Nova Agent isn't reachable on the laptop — start it there with `python serve.py`.", "speak");
+    const lines = [];
+    for (const d of r.disks || []) lines.push(`**${d.drive}** ${d.usedGb} GB used of ${d.totalGb} GB`);
+    for (const f of r.topFolders || []) lines.push(`- ${f.folder}: ${f.gb} GB`);
+    if (r.tempGb) lines.push(`- Temporary files: ${r.tempGb} GB (say “clean temp files” and I'll ask before deleting)`);
+    return say(lines.length ? `💾 **Storage:**\n${lines.join("\n")}` : "💾 I couldn't read the disks.", "speak");
+  }
+  m = t.match(/^(?:clean|clear|delete) (?:my )?(?:temp|temporary|junk|cache)(?: files)?\??$/i) || t.match(/^laptop (?:clean|cleanup)$/i);
+  if (m) {
+    const r = await actOnLaptop("cleanup_preview", "");
+    if (!(r && r.ok)) return say("⚠️ The Nova Agent isn't reachable on the laptop — start it there with `python serve.py`.", "speak");
+    const cats = (r.categories || []).filter((c) => c.gb >= 0.01);
+    if (!cats.length) return say("✨ Nothing safe to clean — temp folders are already tiny.", "speak");
+    const total = cats.reduce((a, c) => a + c.gb, 0);
+    const detail = cats.map((c) => `- ${c.label}: ${c.gb} GB (${c.files} files)`).join("\n");
+    openConfirm("Clean temporary files?", `I'll delete files older than 24 hours from these safe folders only:\n\n${detail}\n\nNothing else is touched. Locked files are skipped.`, `Free ${total.toFixed(1)} GB`, async () => {
+      let freed = 0, files = 0;
+      for (const c of cats) {
+        const res = await actOnLaptop("cleanup", c.path);
+        if (res && res.ok) { freed += res.freedGb || 0; files += res.files || 0; }
+      }
+      const done = `🧹 Done — freed **${freed.toFixed(2)} GB** (${files} files).`;
+      addBubble("ai", done); pushMsg("assistant", done); speak("Cleaned. Freed " + freed.toFixed(1) + " gigabytes.");
+    });
+    return true;
+  }
+  m = t.match(/^(?:laptop\s+)?find (?:the )?(?:file |pdf |photo |video |document )?(?:named |called )?["']?(.+?)["']?$/i) || t.match(/^laptop search (.+)$/i);
+  if (m) {
+    const q = m[1].replace(/\?+$/, "").replace(/^(?:my |on my laptop )/i, "").trim();
+    if (q.length >= 2) {
+      const r = await actOnLaptop("find_files", { q });
+      if (r && r.ok) {
+        renderFileResults(r.hits, q);
+        const n = (r.hits || []).length;
+        return say(n ? `🔎 Found **${n}** file${n === 1 ? "" : "s"} matching “${q}” on the laptop.` : `No files matching “${q}” on the laptop.`);
+      }
+    }
+  }
+
+  // Continue a cross-device task: "continue that message", "continue that draft"
+  m = t.match(/^continue (?:that |the |my )?(message|draft|email|whatsapp|task)?$/i);
+  if (m) {
+    const kindMap = { message: null, draft: null, email: "email", whatsapp: "whatsapp", task: null };
+    const task = latestTask(m[1] ? kindMap[m[1]] : null);
+    if (!task) return say("There's nothing in progress right now — everything is synced and wrapped up.");
+    const lines = [`📌 **${task.title}**`, task.detail || "", ``, `_Started on ${task.origin} · status: ${task.status}_`];
+    return say(lines.filter(Boolean).join("\n"));
+  }
+
   // ——— JARVIS: command the LAPTOP (works from the phone over Wi-Fi) ———
   m = t.match(/^laptop\s+(open|launch|start)\s+(.+)$/i);
   if (m) {
@@ -1088,7 +1342,7 @@ async function tryCommand(text) {
       addBubble("user", text); pushMsg("user", text);
       const wrap = document.createElement("div");
       wrap.className = "msg ai";
-      wrap.innerHTML = `<div class="avatar">💻</div><div class="bubble">🖥️ Laptop screenshot:<br><img src="${r.image}" alt="laptop screenshot" style="max-width:100%;border-radius:10px;margin-top:6px"></div>`;
+      wrap.innerHTML = `<div class="msg-meta"><span class="nova-mark sm" aria-hidden="true"></span><span>${state.nickname}</span></div><div class="msg-body">🖥️ Laptop screenshot:<br><img src="${r.image}" alt="laptop screenshot" style="max-width:100%;border-radius:10px;margin-top:6px"></div>`;
       el.messages.appendChild(wrap);
       scrollBottom();
       pushMsg("assistant", "[laptop screenshot]");
@@ -1243,8 +1497,8 @@ function renderTappable(cards) {
   cards.forEach((c, idx) => {
     const row = document.createElement("div");
     row.className = "msg ai";
-    row.innerHTML = `<div class="avatar">🃏</div><div class="bubble"><b>Q${idx + 1}.</b> ${renderMd(c.q)}<br><span class="reveal">_tap to reveal_</span></div>`;
-    const b = row.querySelector(".bubble");
+    row.innerHTML = `<div class="msg-meta"><span class="nova-mark sm" aria-hidden="true"></span><span>Flashcards</span></div><div class="msg-body"><b>Q${idx + 1}.</b> ${renderMd(c.q)}<br><span class="reveal">_tap to reveal_</span></div>`;
+    const b = row.querySelector(".msg-body");
     b.style.cursor = "pointer";
     b.title = "Tap to reveal";
     b.onclick = () => {
@@ -1419,12 +1673,18 @@ function attachBrainContext(files) {
   return `The user attached these files:\n${lines.join("\n")}\n\nUser message: `;
 }
 
-/* ---------------- Home screen (Gemini-style, our theme) ---------------- */
+/* ---------------- Home screen ---------------- */
+function homeGreeting() {
+  const h = new Date().getHours();
+  const part = h < 5 ? "Working late" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : h < 22 ? "Good evening" : "Working late";
+  return state.profile.name ? `${part}, ${state.profile.name}` : part;
+}
 function showHome() {
   el.messages.classList.add("hidden");
   el.home.classList.remove("hidden");
   el.homeSlot.appendChild(el.composer);
-  if (el.greetNick) el.greetNick.textContent = state.nickname;
+  const greet = $("#home-greet");
+  if (greet) greet.textContent = homeGreeting();
   requestAnimationFrame(() => {
     el.home.classList.add("in");
     replayKineticHeadline();
@@ -1465,20 +1725,14 @@ function handleChip(kind) {
 }
 
 /* ---------------- Send flow ---------------- */
-/* ═══════ STARK HUD: Arc Reactor state machine + telemetry ═══════ */
+/* Nova state machine: drives the background vortex + voice overlay phases.
+   No telemetry — the state itself is communicated through the background. */
 const brandEl = document.getElementById("brand");
-const telLat = document.getElementById("tel-lat");
-const telFps = document.getElementById("tel-fps");
-const telState = document.getElementById("tel-state");
 
-/* Reactor states: idle | listening | processing | speaking | error.
-   Drives: SVG animation, background vortex, telemetry label. */
 let hudState = "idle";
 function setHudState(s) {
   if (s === hudState) return;
   hudState = s;
-  if (brandEl) brandEl.dataset.mode = s;
-  if (telState) { telState.textContent = s.toUpperCase(); telState.className = ""; if (s !== "idle") telState.id = "tel-state"; }
   if (window.NovaFX) {
     if (s === "listening" || s === "speaking" || s === "processing" || s === "idle") window.NovaFX.state(s);
     else window.NovaFX.state("idle");
@@ -1533,230 +1787,148 @@ function setHudState(s) {
   };
 })();
 
-/* ═══════ Motion engine (phone-safe) ═══════ */
+/* ═══════ Motion: only what carries meaning (V2) ═══════
+   Magnetic buttons, cursor spotlight and scroll-blur reveals were removed:
+   decoration, not orientation or feedback. The background vortex + message
+   transitions carry the product's life. */
 const isTouch = matchMedia("(hover: none), (pointer: coarse)").matches;
 
-/* Magnetic buttons: elements lean toward the cursor, spring back on leave. */
-(function initMagnetic() {
-  if (isTouch) return;
-  const STRENGTH = 0.32;
-  const magnetize = (elx) => {
-    if (elx.dataset.magnetized) return;
-    elx.dataset.magnetized = "1";
-    elx.classList.add("magnetic");
-    elx.addEventListener("pointermove", (e) => {
-      const r = elx.getBoundingClientRect();
-      const dx = e.clientX - (r.left + r.width / 2);
-      const dy = e.clientY - (r.top + r.height / 2);
-      elx.style.transform = `translate(${dx * STRENGTH}px, ${dy * STRENGTH}px)`;
-    });
-    elx.addEventListener("pointerleave", () => { elx.style.transform = ""; });
-  };
-  const wire = () => document.querySelectorAll(".send-btn, .tool-btn, .icon-btn, .primary-btn").forEach(magnetize);
-  wire();
-  new MutationObserver(wire).observe(document.body, { childList: true, subtree: true });
-})();
+/* V2: scroll-reveal observer retired with the reveal effects it fed. */
 
-/* Scroll reveals: any .reveal element fades/rises when it enters the viewport. */
-(function initReveals() {
-  const io = new IntersectionObserver((entries) => {
-    for (const en of entries) if (en.isIntersecting) { en.target.classList.add("in"); io.unobserve(en.target); }
-  }, { threshold: 0.12 });
-  const scan = () => document.querySelectorAll(".reveal:not(.in)").forEach((n) => io.observe(n));
-  scan();
-  new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
-})();
+/* Home screen greeting — quiet by design, no re-animation needed. */
+function replayKineticHeadline() { /* retired with the kinetic headline */ }
 
-/* Re-run the kinetic headline entrance each time the home screen shows. */
-function replayKineticHeadline() {
-  const words = document.querySelectorAll(".kinetic-headline .k-word");
-  words.forEach((w) => {
-    w.style.animation = "none";
-    void w.offsetWidth; // reflow restarts the animation
-    w.style.animation = "";
-  });
-}
-
-/* ═══════ JARVIS MODE — full-screen voice HUD with a liquid energy orb ═══════ */
+/* ═══════ NOVA VOICE — mic-activated assistant experience ═══════
+   Clicking the mic opens a focused voice layer. Every state shown maps to a
+   real operation: preparing → listening → understanding → working → done.
+   The canvas is a quiet Nova-star ring that reacts to actual mic amplitude. */
 let jarvisOverlayOpen = false;
 let jarvisRAF = 0;
 const jEl = {};
 const j$ = (id) => document.getElementById(id);
 
-/* The orb: a 2D metaball-style liquid sphere whose perimeter deforms with
-   live mic frequency data — smooth at idle, violent when you speak. */
-function startOrb() {
-  const cv = jEl.orb;
+let vizLevel = 0;                 // smoothed live mic amplitude 0..1
+let vizTarget = 0;
+
+function startVoiceViz() {
+  const cv = jEl.viz;
+  if (!cv) return;
   const ctx = cv.getContext("2d");
   const W = cv.width, H = cv.height;
-  const CXO = W / 2, CYO = H / 2, R = W * 0.185;
-  const PTS = 96;
-  const noiseSeeds = Array.from({ length: PTS }, () => Math.random() * Math.PI * 2);
-  let phase = 0;
+  const CX = W / 2, CY = H / 2, R = W * 0.16;
   const freq = new Uint8Array(128);
+  let phase = 0;
 
   const draw = (now) => {
     jarvisRAF = requestAnimationFrame(draw);
-    if (!waveAnalyser) { /* still draw idle motion */ }
-    if (waveAnalyser) waveAnalyser.getByteFrequencyData(freq);
+    if (waveAnalyser) {
+      waveAnalyser.getByteFrequencyData(freq);
+      let sum = 0;
+      for (let i = 2; i < 48; i++) sum += freq[i];
+      vizTarget = Math.min(1, (sum / 46) / 120);
+    } else {
+      vizTarget = 0;
+    }
+    vizLevel += (vizTarget - vizLevel) * 0.12;   // smooth, never jittery
     const t = now / 1000;
-    phase += 0.012;
-
-    // live loudness 0..1 from the voice band
-    let sum = 0, peakI = 0;
-    for (let i = 2; i < 48; i++) { sum += freq[i]; if (freq[i] > freq[peakI]) peakI = i; }
-    const level = Math.min(1, (sum / 46) / 120);
-    const peakHz = Math.round(peakI * (waveCtx ? waveCtx.sampleRate : 44100) / 256);
-
-    // telemetry
-    if (jEl.db) jEl.db.textContent = (level > 0.005 ? (20 * Math.log10(level)).toFixed(0) : "-∞") + " dB";
-    if (jEl.peak) jEl.peak.textContent = peakHz + " Hz";
+    phase += 0.01 + vizLevel * 0.02;
 
     ctx.clearRect(0, 0, W, H);
 
-    // ambient halo
-    const halo = ctx.createRadialGradient(CXO, CYO, R * 0.4, CXO, CYO, R * 2.6);
-    halo.addColorStop(0, "rgba(56,189,248,0.16)");
-    halo.addColorStop(0.55, "rgba(56,189,248,0.05)");
-    halo.addColorStop(1, "rgba(56,189,248,0)");
+    // halo
+    const halo = ctx.createRadialGradient(CX, CY, R * 0.4, CX, CY, R * 2.4);
+    halo.addColorStop(0, "rgba(106,165,248,0.14)");
+    halo.addColorStop(1, "rgba(106,165,248,0)");
     ctx.fillStyle = halo;
     ctx.fillRect(0, 0, W, H);
 
-    // liquid perimeter: radius modulated by voice + traveling noise waves
-    const deform = 1 + level * 0.55;
-    ctx.beginPath();
-    for (let i = 0; i <= PTS; i++) {
-      const a = (i / PTS) * Math.PI * 2;
-      const w1 = Math.sin(a * 3 + phase * 2.1 + noiseSeeds[i % PTS]) * 0.030;
-      const w2 = Math.sin(a * 5 - phase * 1.4) * 0.018;
-      const w3 = Math.sin(a * 8 + phase * 3.2) * 0.010 * (0.4 + level);
-      const rr = R * deform * (1 + w1 + w2 + w3 + level * 0.10 * Math.sin(a * 2 + t * 6));
-      const x = CXO + Math.cos(a) * rr;
-      const y = CYO + Math.sin(a) * rr;
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-
-    // glass-liquid fill
-    const body = ctx.createRadialGradient(CXO - R * 0.25, CYO - R * 0.35, R * 0.1, CXO, CYO, R * 1.35);
-    body.addColorStop(0, "rgba(190,240,255,0.32)");
-    body.addColorStop(0.45, "rgba(56,189,248,0.20)");
-    body.addColorStop(0.8, "rgba(14,60,110,0.28)");
-    body.addColorStop(1, "rgba(3,10,24,0.05)");
-    ctx.fillStyle = body;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(125,211,252,0.85)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // inner core glow reacts to level
-    const core = ctx.createRadialGradient(CXO, CYO, 2, CXO, CYO, R * (0.55 + level * 0.5));
-    core.addColorStop(0, "rgba(240,252,255,0.95)");
-    core.addColorStop(0.35, "rgba(125,211,252,0.55)");
-    core.addColorStop(1, "rgba(56,189,248,0)");
-    ctx.fillStyle = core;
-    ctx.beginPath(); ctx.arc(CXO, CYO, R * (0.62 + level * 0.5), 0, Math.PI * 2); ctx.fill();
-
-    // frequency ring: thin bars orbiting the orb
-    const barsN = 64;
-    for (let i = 0; i < barsN; i++) {
-      const v = freq[2 + Math.floor((i / barsN) * 60)] / 255;
-      const a = (i / barsN) * Math.PI * 2 - phase * 0.6;
-      const r1 = R * 1.38;
-      const r2 = r1 + 4 + v * 46;
-      ctx.strokeStyle = `rgba(56,189,248,${(0.10 + v * 0.6).toFixed(3)})`;
+    // reactive ring of bars
+    const BARS = 64;
+    for (let i = 0; i < BARS; i++) {
+      const v = waveAnalyser ? freq[2 + Math.floor((i / BARS) * 60)] / 255 : 0;
+      const a = (i / BARS) * Math.PI * 2 - phase * 0.7;
+      const r1 = R * 1.45;
+      const r2 = r1 + 3 + v * 40 + vizLevel * 8;
+      ctx.strokeStyle = "rgba(106,165,248," + (0.10 + v * 0.55).toFixed(3) + ")";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(CXO + Math.cos(a) * r1, CYO + Math.sin(a) * r1);
-      ctx.lineTo(CXO + Math.cos(a) * r2, CYO + Math.sin(a) * r2);
+      ctx.moveTo(CX + Math.cos(a) * r1, CY + Math.sin(a) * r1);
+      ctx.lineTo(CX + Math.cos(a) * r2, CY + Math.sin(a) * r2);
       ctx.stroke();
     }
 
-    // haptic vibration on strong peaks + ripple spawn
-    if (level > 0.55 && !jEl.stage.classList.contains("haptic")) {
-      jEl.stage.classList.remove("haptic"); void jEl.stage.offsetWidth;
-      jEl.stage.classList.add("haptic");
-      spawnJripple();
-    }
+    // Nova four-point star, breathing with the voice
+    const rr = R * (1 + vizLevel * 0.18 + Math.sin(t * 1.6) * 0.03);
+    const star = (cx, cy, long, short, rot) => {
+      ctx.beginPath();
+      for (let k = 0; k < 8; k++) {
+        const ang = rot + (Math.PI / 2) * (k / 2);
+        const rad = k % 2 === 0 ? long : short;
+        const x = cx + rad * Math.cos(ang), y = cy + rad * Math.sin(ang);
+        k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+    };
+    ctx.save();
+    ctx.translate(CX, CY);
+    ctx.rotate(Math.sin(t * 0.8) * 0.12);
+    star(0, 0, rr, rr * 0.30, -Math.PI / 2);
+    ctx.fillStyle = "rgba(106,165,248,0.92)";
+    ctx.shadowColor = "rgba(106,165,248,0.55)";
+    ctx.shadowBlur = 22 + vizLevel * 26;
+    ctx.fill();
+    // small companion star
+    star(rr * 0.62, rr * 0.5, rr * 0.16, rr * 0.05, -Math.PI / 2);
+    ctx.fillStyle = "rgba(106,165,248,0.7)";
+    ctx.shadowBlur = 12;
+    ctx.fill();
+    ctx.restore();
   };
   jarvisRAF = requestAnimationFrame(draw);
 }
 
-function spawnJripple() {
-  if (!jEl.ripples) return;
-  const i = document.createElement("i");
-  jEl.ripples.appendChild(i);
-  requestAnimationFrame(() => i.classList.add("go"));
-  setTimeout(() => i.remove(), 1500);
+function setVoicePhase(txt) {
+  if (jEl.state) jEl.state.textContent = txt;
 }
-
-function setJarvisStatus(txt) {
-  if (jEl.status) jEl.status.textContent = txt;
-}
-
-/* Cross-device voice-state mirror (throttled, piggybacks the sync layer). */
-let lastVoicePush = 0;
-function setVoiceState(stateName, transcript) {
-  const now = Date.now();
-  if (now - lastVoicePush < 700) return;
-  lastVoicePush = now;
-  if (state.syncCode) {
-    fetch("/api/sync", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: state.syncCode, device: deviceName(),
-        payload: { voice: { state: stateName, transcript: (transcript || "").slice(0, 120), ts: now } } }),
-    }).catch(() => {});
-  }
+function setHeard(txt) {
+  if (jEl.heard) jEl.heard.textContent = txt || "";
 }
 
 async function openJarvis() {
   jEl.overlay = jEl.overlay || j$("jarvis");
-  jEl.orb = jEl.orb || j$("jarvis-orb");
-  jEl.status = jEl.status || j$("jarvis-status-text");
-  jEl.transcript = jEl.transcript || j$("jarvis-transcript");
-  jEl.ripples = jEl.ripples || j$("jarvis-ripples");
-  jEl.stage = jEl.stage || document.querySelector(".jarvis-stage");
-  jEl.db = jEl.db || j$("jt-db");
-  jEl.peak = jEl.peak || j$("jt-peak");
-  jEl.lat = jEl.lat || j$("jt-lat");
-  jEl.dev = jEl.dev || j$("jt-dev");
+  jEl.viz = jEl.viz || j$("jarvis-viz");
+  jEl.state = jEl.state || j$("jarvis-state");
+  jEl.heard = jEl.heard || j$("jarvis-heard");
+  jEl.exit = jEl.exit || j$("jarvis-exit");
 
   jarvisOverlayOpen = true;
   jEl.overlay.classList.remove("hidden");
   requestAnimationFrame(() => jEl.overlay.classList.add("open"));
-  startOrb();
+  setVoicePhase("Preparing…");
+  setHeard("");
+  startVoiceViz();
 
-  // Ask for the mic BEFORE starting the voice loop, and make failures loud
-  // with an exact fix instead of a silent dead overlay.
-  let micOK = false;
+  // Real mic first — never show "Listening" without one.
   try {
     await ensureMic();
-    micOK = true;
   } catch (err) {
     const name = err && err.name;
     if (name === "NotAllowedError" || name === "SecurityError") {
-      setJarvisStatus("Mic blocked");
-      if (jEl.transcript) jEl.transcript.textContent = "Click the 🔒 / mic icon in the address bar → allow Microphone → reload. (If you opened Nova via the LAN IP, use localhost instead — browsers block mics on non-secure origins.)";
-      toast("Mic blocked — allow it in the address bar, then reload", "err");
+      setVoicePhase("Microphone blocked");
+      setHeard("Allow the microphone in your browser's address bar, then try again.");
     } else if (name === "NotFoundError") {
-      setJarvisStatus("No microphone");
-      if (jEl.transcript) jEl.transcript.textContent = "No microphone found on this device.";
+      setVoicePhase("No microphone");
+      setHeard("This device doesn't have a microphone Nova can use.");
     } else {
-      setJarvisStatus("Mic unavailable");
-      if (jEl.transcript) jEl.transcript.textContent = "Mic error: " + (name || "unknown") + " — try reloading.";
+      setVoicePhase("Microphone unavailable");
+      setHeard("Try reloading the page.");
     }
     setVoiceState("mic-error");
-    return; // do NOT start the voice loop without a mic
+    return;
   }
   micGate(true);
 
-  if (jEl.dev) {
-    const paired = state.syncCode ? 2 : 1;
-    jEl.dev.textContent = paired + (paired > 1 ? " synced" : " (pair in Settings)");
-  }
-  if (jEl.lat) jEl.lat.textContent = (telLat && telLat.textContent) || "--";
-
-  setJarvisStatus("Listening");
+  setVoicePhase("Listening…");
   setVoiceState("listening");
   startVoiceChatInJarvis();
 }
@@ -1764,52 +1936,35 @@ async function openJarvis() {
 function closeJarvis() {
   jarvisOverlayOpen = false;
   jEl.overlay.classList.remove("open");
-  setTimeout(() => jEl.overlay.classList.add("hidden"), 350);
+  setTimeout(() => jEl.overlay.classList.add("hidden"), 320);
   cancelAnimationFrame(jarvisRAF);
-  endVoiceChat("JARVIS mode closed");
+  endVoiceChat("Voice closed");
   micGate(false);
   setVoiceState("idle");
 }
 
 /* The existing voice loop runs inside the overlay; mirror its phases. */
+/* The existing voice loop runs inside the overlay; mirror its phases. */
 function startVoiceChatInJarvis() {
-  if (!SR && !NATIVE_BRIDGE) { toast("Voice needs Chrome/Edge", "warn"); return; }
+  if (!SR && !NATIVE_BRIDGE) {
+    setVoicePhase("Voice not available here");
+    setHeard("Nova voice needs Chrome, Edge, or the Nova Android app.");
+    return;
+  }
   if (!voiceChat) { voiceChat = true; el.mic.classList.add("listening"); listenOnce(); }
-  // hook phase updates
+  // Mirror every real phase into the voice layer (human words, real states).
   const origSetWave = setWaveText;
   setWaveText = function (t) {
     origSetWave(t);
     if (!jarvisOverlayOpen) return;
-    if (/listening/i.test(t)) setJarvisStatus("Listening");
-    else if (/thinking/i.test(t)) setJarvisStatus("Analyzing voice");
-    else if (t && t.startsWith("\u201c")) { setJarvisStatus("Heard you"); if (jEl.transcript) jEl.transcript.textContent = t.replace(/[\u201c\u201d]/g, ""); }
+    if (/listening/i.test(t)) setVoicePhase("Listening…");
+    else if (/thinking/i.test(t)) setVoicePhase("Working…");
+    else if (t && t.startsWith("\u201c")) {
+      setVoicePhase("Heard you");
+      setHeard(t.replace(/[\u201c\u201d]/g, ""));
+    }
   };
 }
-
-/* ═══════ Telemetry: real FPS + real API latency, updated live ═══════ */
-(function initTelemetry() {
-  let frames = 0, lastT = performance.now();
-  function fpsLoop(t) {
-    frames++;
-    if (t - lastT >= 1000) {
-      if (telFps) telFps.textContent = frames + " fps";
-      frames = 0; lastT = t;
-    }
-    requestAnimationFrame(fpsLoop);
-  }
-  requestAnimationFrame(fpsLoop);
-})();
-
-/* Wrap callAIOnce to measure true round-trip latency shown in the HUD. */
-(function wrapLatency() {
-  if (typeof callAI !== "function") return;
-  const orig = callAI;
-  callAI = async function (messages, onDelta) {
-    const t0 = performance.now();
-    try { return await orig(messages, onDelta); }
-    finally { if (telLat) telLat.textContent = Math.round(performance.now() - t0) + " ms"; }
-  };
-})();
 
 /* Mic level → vortex listening pulse (when the analyser is live). */
 setInterval(() => {
@@ -1836,10 +1991,11 @@ function setBusy(on) {
 function newBubbleStream() {
   const wrap = document.createElement("div");
   wrap.className = "msg ai thinking";
-  wrap.innerHTML = `<div class="avatar">✦</div><div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div>`;
+  wrap.setAttribute("role", "listitem");
+  wrap.innerHTML = `<div class="msg-meta"><span class="nova-mark sm" aria-hidden="true"></span><span>${state.nickname}</span></div><div class="msg-body"><span class="typing"><i></i><i></i><i></i></span></div>`;
   el.messages.appendChild(wrap);
   scrollBottom();
-  return wrap.querySelector(".bubble");
+  return wrap.querySelector(".msg-body");
 }
 
 async function handleSend(text, opts = {}) {
@@ -2384,6 +2540,38 @@ function stopListening() {
   setHudState("idle");
 }
 
+/* ---------------- Confirm dialog (typed, for destructive actions) ---------------- */
+let confirmState = null;
+function openConfirm(title, message, actionLabel, onConfirm) {
+  confirmState = { onConfirm };
+  $("#confirm-title").textContent = title;
+  $("#confirm-text").textContent = message;
+  $("#confirm-input").value = "";
+  $("#confirm-go").disabled = true;
+  $("#confirm-go").textContent = actionLabel || "Confirm";
+  $("#confirm-modal").classList.remove("hidden");
+  setTimeout(() => $("#confirm-input").focus(), 60);
+}
+function closeConfirm() {
+  $("#confirm-modal").classList.add("hidden");
+  confirmState = null;
+}
+function wireConfirm() {
+  $("#confirm-cancel").onclick = closeConfirm;
+  $("#confirm-cancel-2").onclick = closeConfirm;
+  $("#confirm-modal").addEventListener("click", (e) => { if (e.target === $("#confirm-modal")) closeConfirm(); });
+  $("#confirm-input").addEventListener("input", (e) => {
+    $("#confirm-go").disabled = e.target.value.trim().toUpperCase() !== "YES";
+  });
+  $("#confirm-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("#confirm-go").disabled) $("#confirm-go").click(); });
+  $("#confirm-go").onclick = () => {
+    if (!confirmState) return;
+    const fn = confirmState.onConfirm;
+    closeConfirm();
+    fn();
+  };
+}
+
 /* ---------------- Settings UI ---------------- */
 let freeModelsCache = [];
 async function refreshFreeModels() {
@@ -2415,18 +2603,151 @@ function fillModelSelect() {
   if ([...el.setModel.options].some((o) => o.value === state.model)) el.setModel.value = state.model;
 }
 
-function openSettings() {
+function openSettings(page) {
   el.setNickname.value = state.nickname;
   el.setAutospeak.checked = state.autospeak;
   el.setStudyStrict.checked = state.studyStrict;
   const hf = $("#set-handsfree"); if (hf) hf.checked = state.handsFree;
   $("#set-memory").value = state.profile.facts.join("\n");
   $("#set-sync-code").value = state.syncCode;
+  const themeSel = $("#set-theme"); if (themeSel) themeSel.value = state.theme;
   updateSyncStatus();
   refreshDevices();
   fillModelSelect();
   refreshTHModels();
   el.settingsModal.classList.remove("hidden");
+  showSettingsPage(page || "general");
+}
+
+function showSettingsPage(page) {
+  document.querySelectorAll("#settings-modal .settings-nav button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.page === page));
+  document.querySelectorAll("#settings-modal .settings-page").forEach((p) =>
+    p.classList.toggle("hidden", p.dataset.page !== page));
+}
+
+/* ---------------- Nova Memory: clear with a human confirmation ---------------- */
+function clearMemory() {
+  openConfirm("Clear Nova Memory?", "Nova will forget everything you've shared — name, city, preferences, all of it. You can teach it again anytime.", "Clear memory", () => {
+    state.profile = { name: "", facts: [], asked: true };
+    LS.set("nova.profile", state.profile);
+    scheduleSync();
+    const ta = $("#set-memory"); if (ta) ta.value = "";
+    toast("Memory cleared", "ok");
+  });
+}
+
+/* ---------------- Command palette (Ctrl/Cmd + K) ---------------- */
+const PALETTE_ICONS = {
+  chat: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H4l2.4-2.4A8 8 0 1 1 21 12z"/></svg>',
+  sparkle: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>',
+  note: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h9l5 5v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M8 13h8M8 17h5"/></svg>',
+  mic: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><path d="M12 18v4"/></svg>',
+  search: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>',
+  lock: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 7.4-7 9-4-1.6-7-4.6-7-9V6z"/></svg>',
+};
+function paletteItems() {
+  const items = [
+    { label: "New chat", icon: "chat", run: () => { closePalette(); animateNewChat(); } },
+    { label: "Start voice mode", icon: "mic", run: () => { closePalette(); openJarvis(); } },
+    { label: "Toggle hands-free listening", icon: "mic", run: () => { closePalette(); toggleHandsFree(); } },
+    { label: "Open notes", icon: "note", run: () => { closePalette(); openNotes(); } },
+    { label: "Search chats", icon: "search", run: () => { closePalette(); if (window.innerWidth <= 640) openChatsSheet(); else { $("#side-search").focus(); } } },
+    { label: "Switch theme", icon: "sparkle", run: () => { closePalette(); cycleTheme(); } },
+    { label: "Open settings", icon: "gear", run: () => { closePalette(); openSettings(); } },
+    { label: "Privacy Center", icon: "lock", run: () => { closePalette(); openSettings("privacy"); } },
+    { label: "Study mode", icon: "sparkle", run: () => { closePalette(); setMode("study"); } },
+    { label: "Exam prep mode", icon: "sparkle", run: () => { closePalette(); setMode("exam"); } },
+    { label: "Homework mode", icon: "sparkle", run: () => { closePalette(); setMode("homework"); } },
+  ];
+  const task = latestTask();
+  if (task) items.splice(1, 0, { label: `Continue: ${task.title}`, icon: "sparkle", run: () => { closePalette(); handleSend("continue that task"); } });
+  return items;
+}
+let paletteSel = 0;
+function renderPalette(filter = "") {
+  const list = $("#palette-list");
+  const q = filter.trim().toLowerCase();
+  const items = paletteItems().filter((it) => it.label.toLowerCase().includes(q));
+  paletteSel = Math.min(paletteSel, Math.max(0, items.length - 1));
+  list.innerHTML = "";
+  if (!items.length) {
+    list.innerHTML = '<div class="palette-empty">Nothing matches — try another word</div>';
+    return;
+  }
+  items.forEach((it, i) => {
+    const b = document.createElement("button");
+    b.className = "palette-item" + (i === paletteSel ? " sel" : "");
+    b.setAttribute("role", "option");
+    b.innerHTML = `<span class="pi-ic">${PALETTE_ICONS[it.icon] || ""}</span><span>${it.label}</span>`;
+    b.onclick = () => it.run();
+    b.onmousemove = () => { if (paletteSel !== i) { paletteSel = i; renderPalette(filter); } };
+    list.appendChild(b);
+  });
+}
+function openPalette() {
+  paletteSel = 0;
+  renderPalette();
+  const p = $("#palette");
+  p.classList.remove("hidden");
+  const inp = $("#palette-input");
+  inp.value = "";
+  setTimeout(() => inp.focus(), 30);
+}
+function closePalette() {
+  $("#palette").classList.add("hidden");
+}
+function paletteKey(e) {
+  const items = paletteItems().filter((it) => it.label.toLowerCase().includes($("#palette-input").value.trim().toLowerCase()));
+  if (e.key === "ArrowDown") { e.preventDefault(); paletteSel = Math.min(paletteSel + 1, items.length - 1); renderPalette($("#palette-input").value); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); paletteSel = Math.max(paletteSel - 1, 0); renderPalette($("#palette-input").value); }
+  else if (e.key === "Enter") { e.preventDefault(); const it = items[paletteSel]; if (it) it.run(); }
+  else if (e.key === "Escape") { e.preventDefault(); closePalette(); }
+}
+
+/* ---------------- Bottom sheets (mobile chats) + bottom nav ---------------- */
+function openChatsSheet() {
+  renderHistoryInto($("#sheet-history"), $("#sheet-search")?.value || "");
+  $("#chats-sheet").classList.remove("hidden");
+}
+function closeChatsSheet() { $("#chats-sheet").classList.add("hidden"); }
+
+/* ---------------- Notes workspace ---------------- */
+function openNotes() {
+  renderNotes();
+  $("#notes-modal").classList.remove("hidden");
+}
+function renderNotes() {
+  const box = $("#notes-list");
+  const q = ($("#notes-search")?.value || "").trim().toLowerCase();
+  const notes = state.notes.filter((n) => !q || (n.text || "").toLowerCase().includes(q));
+  box.innerHTML = "";
+  if (!notes.length) {
+    box.innerHTML = `<div class="dev-row muted">${q ? "No notes matching “" + q + "”" : "No notes yet. Create your first note above — or say “note …” in chat."}</div>`;
+    return;
+  }
+  for (const n of notes) {
+    const row = document.createElement("div");
+    row.className = "dev-row";
+    const body = document.createElement("span");
+    body.className = "dev-name";
+    const txt = document.createElement("span");
+    txt.textContent = n.text;
+    const when = document.createElement("small");
+    when.textContent = new Date(n.ts).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " · " + new Date(n.ts).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    body.append(txt, when);
+    const x = document.createElement("button");
+    x.className = "dev-revoke"; x.textContent = "✕"; x.title = "Delete note";
+    x.setAttribute("aria-label", "Delete note");
+    x.onclick = () => {
+      state.notes = state.notes.filter((m) => m !== n);
+      saveAll(); scheduleSync();
+      renderNotes();
+    };
+    row.append(body, x);
+    box.appendChild(row);
+  }
 }
 
 function updateSyncStatus() {
@@ -2817,10 +3138,8 @@ function setMode(mode) {
   chat.mode = mode;
   saveAll();
   el.modeChip.textContent = MODE_LABELS[mode] || "Chat";
-  el.modeChip.classList.remove("pop");
-  void el.modeChip.offsetWidth; // restart the pop animation
-  el.modeChip.classList.add("pop");
-  document.querySelectorAll(".mode-btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+  document.querySelectorAll(".side-item[data-mode]").forEach((b) =>
+    b.classList.toggle("active", b.dataset.mode === mode));
   if (chat.messages.length) addBubble("sys", `Switched to **${MODE_LABELS[mode]}** mode.`);
 }
 
@@ -2845,15 +3164,49 @@ function wire() {
     toast("Fill in the blanks — Nova will know you ✦", "ok");
   };
   const hfNick = $("#hf-nick"); if (hfNick) hfNick.textContent = state.nickname;
-  const topHome = $("#btn-home-4");
-  if (topHome) topHome.onclick = () => {
+  const hfNick2 = $("#hf-nick2"); if (hfNick2) hfNick2.textContent = state.nickname;
+  const goHome = () => {
     el.sidebar.classList.remove("open"); el.scrim.classList.remove("show");
+    closeChatsSheet();
     state.currentId = null; // always land on the greeting screen
     LS.set("nova.currentId", null);
     renderMessages();
   };
+  el.brand.onclick = goHome;
+  document.querySelectorAll(".bn-btn").forEach((b) => {
+    b.onclick = () => {
+      const nav = b.dataset.nav;
+      if (nav === "home") goHome();
+      else if (nav === "chats") openChatsSheet();
+      else if (nav === "new") animateNewChat();
+      else if (nav === "notes") openNotes();
+      else if (nav === "settings") openSettings();
+    };
+  });
+  $("#btn-close-chats").onclick = closeChatsSheet;
+  $("#chats-sheet").addEventListener("click", (e) => { if (e.target === $("#chats-sheet")) closeChatsSheet(); });
+  $("#sheet-search").addEventListener("input", () => renderHistoryInto($("#sheet-history"), $("#sheet-search").value));
+  $("#btn-close-notes").onclick = () => $("#notes-modal").classList.add("hidden");
+  $("#notes-modal").addEventListener("click", (e) => { if (e.target === $("#notes-modal")) $("#notes-modal").classList.add("hidden"); });
+  $("#btn-note-save").onclick = () => {
+    const v = $("#note-input").value.trim();
+    if (!v) return;
+    state.notes.unshift({ text: v, ts: Date.now() });
+    saveAll(); scheduleSync();
+    $("#note-input").value = "";
+    renderNotes();
+    toast("Note saved", "ok");
+  };
+  $("#notes-search").addEventListener("input", renderNotes);
+  $("#nav-notes").onclick = () => { closeChatsSheet(); openNotes(); };
+  $("#btn-theme").onclick = cycleTheme;
+  $("#btn-theme-2").onclick = cycleTheme;
+  $("#btn-settings-2").onclick = () => openSettings();
+  $("#nav-newchat-foot").onclick = () => animateNewChat();
+  $("#nav-palette").onclick = openPalette;
+  $("#nav-settings-foot").onclick = () => openSettings();
+  $("#side-search").addEventListener("input", () => renderHistoryInto(el.history, $("#side-search").value));
   el.scrim.onclick = () => { el.sidebar.classList.remove("open"); el.scrim.classList.remove("show"); };
-  el.brand.onclick = () => window.scrollTo(0, 0);
 
   el.send.onclick = () => handleSend(el.input.value);
   el.input.addEventListener("keydown", (e) => {
@@ -2865,6 +3218,24 @@ function wire() {
   el.listenStop.onclick = stopListening;
   const jExit = j$("jarvis-exit");
   if (jExit) jExit.onclick = closeJarvis;
+
+  /* Command palette + global keyboard shortcuts */
+  document.addEventListener("keydown", (e) => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); $("#palette").classList.contains("hidden") ? openPalette() : closePalette(); return; }
+    if (mod && e.key.toLowerCase() === "n") { e.preventDefault(); animateNewChat(); return; }
+    if (mod && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); openSettings("privacy"); return; }
+    const paletteOpen = !$("#palette").classList.contains("hidden");
+    if (paletteOpen) { paletteKey(e); return; }
+    if (e.key === "Escape") {
+      if (!$("#chats-sheet").classList.contains("hidden")) closeChatsSheet();
+      else if (!$("#notes-modal").classList.contains("hidden")) $("#notes-modal").classList.add("hidden");
+      else if (!el.settingsModal.classList.contains("hidden")) closeSettingsAnimated();
+      else if (jarvisOverlayOpen) closeJarvis();
+    }
+  });
+  $("#palette").addEventListener("click", (e) => { if (e.target === $("#palette")) closePalette(); });
+  $("#palette-input").addEventListener("input", () => { paletteSel = 0; renderPalette($("#palette-input").value); });
 
   el.home.querySelectorAll(".chip").forEach((b) => { b.onclick = () => handleChip(b.dataset.chip); });
   el.btnHome.onclick = () => {
@@ -2922,25 +3293,44 @@ function wire() {
   el.fileDoc.onchange = (e) => addFiles(e.target.files);
   el.fileFolder.onchange = (e) => addFiles(e.target.files);
 
-  /* Mobile: mode buttons select on first tap (no hover flicker). */
+  /* Modes: sidebar buttons carry data-mode. */
+  document.querySelectorAll(".side-item[data-mode]").forEach((b) => {
+    b.onclick = () => setMode(b.dataset.mode);
+  });
   if (window.matchMedia("(hover: none)").matches) {
-    document.querySelectorAll(".mode-btn, .quick-btn, .history-item").forEach((b) => b.classList.add("touch"));
+    document.querySelectorAll(".history-item").forEach((b) => b.classList.add("touch"));
   }
-  el.settings.onclick = openSettings;
+  el.settings.onclick = () => openSettings();
   const closeSettingsAnimated = () => {
     if (el.settingsModal.classList.contains("hidden")) return;
-    el.settingsModal.classList.add("closing");
-    setTimeout(() => {
-      el.settingsModal.classList.add("hidden");
-      el.settingsModal.classList.remove("closing");
-    }, 200);
+    el.settingsModal.classList.add("hidden");
   };
   el.closeSettings.onclick = closeSettingsAnimated;
   el.saveSettings.onclick = saveSettings;
-  el.wipe.onclick = () => {
-    if (confirm("Erase all chats, notes, flashcards and settings on this device?")) {
-      localStorage.clear(); location.reload();
-    }
+  document.querySelectorAll("#settings-modal .settings-nav button").forEach((b) => {
+    b.onclick = () => showSettingsPage(b.dataset.page);
+  });
+  $("#btn-clear-memory").onclick = clearMemory;
+  /* Erase-all: typed confirmation — never a one-click accident */
+  const openWipe = () => {
+    $("#wipe-modal").classList.remove("hidden");
+    $("#wipe-confirm-input").value = "";
+    $("#btn-wipe-confirm").disabled = true;
+    setTimeout(() => $("#wipe-confirm-input").focus(), 60);
+  };
+  const closeWipe = () => $("#wipe-modal").classList.add("hidden");
+  el.wipe.onclick = openWipe;
+  $("#btn-wipe-cancel").onclick = closeWipe;
+  $("#btn-wipe-cancel-2").onclick = closeWipe;
+  $("#wipe-modal").addEventListener("click", (e) => { if (e.target === $("#wipe-modal")) closeWipe(); });
+  $("#wipe-confirm-input").addEventListener("input", (e) => {
+    $("#btn-wipe-confirm").disabled = e.target.value.trim().toUpperCase() !== "ERASE";
+  });
+  $("#btn-wipe-confirm").onclick = () => {
+    if ($("#wipe-confirm-input").value.trim().toUpperCase() !== "ERASE") return;
+    closeWipe();
+    localStorage.clear();
+    location.reload();
   };
 
   el.settingsModal.addEventListener("click", (e) => {
@@ -2960,9 +3350,6 @@ function wire() {
   };
   $("#btn-sync-now").onclick = () => doSync();
 
-  document.querySelectorAll(".mode-btn").forEach((b) => {
-    b.onclick = () => setMode(b.dataset.mode);
-  });
   document.querySelectorAll(".quick-btn").forEach((b) => {
     b.onclick = () => { el.input.value = b.dataset.fill; el.input.focus(); autosize(); };
   });
@@ -2971,13 +3358,9 @@ function wire() {
   window.addEventListener("offline", () => setNet(false));
   setNet(navigator.onLine);
 
-  // theme toggle on brand double-click
-  let lastTap = 0;
-  el.brand.ondblclick = () => {
-    state.theme = state.theme === "dark" ? "light" : "dark";
-    document.documentElement.dataset.theme = state.theme;
-    LS.set("nova.theme", state.theme);
-  };
+  /* Theme select in Settings → General */
+  const themeSel = $("#set-theme");
+  if (themeSel) themeSel.onchange = () => { state.theme = themeSel.value; LS.set("nova.theme", state.theme); applyTheme(); };
 
   // PWA install prompt — hide the button entirely once installed
   const standalone = matchMedia("(display-mode: standalone)").matches ||
@@ -3029,6 +3412,85 @@ function wire() {
     openSyncStream();
     document.addEventListener("visibilitychange", () => { if (!document.hidden) doSync(true); });
   }
+
+  wireAgentPanels();
+}
+
+/* ---------------- Connections / Performance / Diagnostics — real state only ---------------- */
+let agentOnline = null;   // null = unknown, true/false = last real probe result
+
+async function probeAgent(silent = true) {
+  try {
+    const r = await fetch("/api/ping", { cache: "no-store" });
+    const j = await r.json();
+    agentOnline = !!(j && j.ok);
+    return j;
+  } catch {
+    agentOnline = false;
+    return null;
+  }
+}
+
+function wireAgentPanels() {
+  const openPerf = async () => {
+    const body = $("#perf-body");
+    body.innerHTML = '<div class="dev-row muted">Reading live numbers…</div>';
+    const [ping, stats] = await Promise.all([probeAgent(), actOnLaptop("stats", "")]);
+    if (!(stats && stats.ok)) {
+      body.innerHTML = '<div class="dev-row muted">The Nova Agent isn\u2019t running. On the laptop, open the Nova folder and run <b>python serve.py</b>, then refresh.</div>';
+    } else {
+      body.innerHTML = "";
+      const add = (label, value) => {
+        const row = document.createElement("div");
+        row.className = "dev-row";
+        row.innerHTML = `<span style="min-width:86px;color:var(--text-3)">${label}</span><span>${value}</span>`;
+        body.appendChild(row);
+      };
+      add("CPU", stats.cpu != null ? Math.round(stats.cpu) + "%" : "—");
+      add("RAM", stats.ramTotalGb ? `${stats.ramUsedGb} / ${stats.ramTotalGb} GB` : "—");
+      add("GPU", stats.gpuName ? escHtml(stats.gpuName) + (stats.gpuLoad != null ? ` · ${Math.round(stats.gpuLoad)}%` : "") : "—");
+      add("Battery", stats.battery != null ? Math.round(stats.battery) + "%" : "—");
+      if (stats.processes) add("Processes", String(stats.processes));
+    }
+    const connSub = $("#conn-agent-sub"), connState = $("#conn-agent-state");
+    if (connSub) connSub.textContent = agentOnline ? "Listening on this network — system stats, files, safe cleanup" : "Start with python serve.py on the laptop";
+    if (connState) { connState.textContent = agentOnline ? "Connected" : "Offline"; connState.className = agentOnline ? "conn-state ok" : "conn-state"; }
+    const da = $("#diag-agent");
+    if (da) da.textContent = agentOnline ? "Connected (v2)" : "Offline — python serve.py";
+  };
+  const openDiag = () => {
+    const brain = currentBrain();
+    const db = $("#diag-brain"); if (db) db.textContent = brain ? `${brain.name} — ${brain.sub}` : "—";
+    const dl = $("#diag-latency"); if (dl) dl.textContent = window.__novaLastLatency ? Math.round(window.__novaLastLatency) + " ms round-trip" : "No request yet";
+    const ds = $("#diag-sync"); if (ds) ds.textContent = state.syncCode ? `Paired as “${state.syncCode}” · ${deviceName()}` : "Not paired";
+    const dv = $("#diag-voice"); if (dv) dv.textContent = NATIVE_BRIDGE ? "Native (Android app)" : SR ? "Browser speech recognition" : "Not supported in this browser";
+  };
+  // Re-render performance/diagnostics whenever their page is opened
+  document.querySelectorAll('#settings-modal .settings-nav button').forEach((b) => {
+    const orig = b.onclick;
+    b.addEventListener("click", () => {
+      if (b.dataset.page === "performance") openPerf();
+      if (b.dataset.page === "diagnostics") openDiag();
+    });
+  });
+  const refresh = $("#btn-perf-refresh");
+  if (refresh) refresh.onclick = openPerf;
+  // probe agent once at startup for the Connections panel
+  probeAgent().then((j) => {
+    const connSub = $("#conn-agent-sub"), connState = $("#conn-agent-state");
+    if (connSub && agentOnline) connSub.textContent = (j && j.device ? j.device + " · " : "") + "system stats, files, safe cleanup";
+    if (connState && agentOnline) { connState.textContent = "Connected"; connState.className = "conn-state ok"; }
+  });
+  // Real latency probe: wrap the free-AI path once for Diagnostics.
+  if (!window.__novaLatencyWrapped) {
+    window.__novaLatencyWrapped = true;
+    const origCallAI = callAI;
+    callAI = async function (messages, onDelta) {
+      const t0 = performance.now();
+      try { return await origCallAI(messages, onDelta); }
+      finally { window.__novaLastLatency = performance.now() - t0; }
+    };
+  }
 }
 
 /* ---------------- Device sync (laptop <-> phone) ----------------
@@ -3042,8 +3504,40 @@ function syncPayload() {
     profile: state.profile,
     nickname: state.nickname,
     handsFree: !!state.handsFree,
+    tasks: state.tasks,
     _ts: Date.now(),
   };
+}
+
+/* ---------------- Cross-device tasks (drafts & actions with a life) ----------------
+   A task = {id, kind, title, detail, status, ts, updatedTs, origin}. Created on
+   one device, continued/finished on another — through the existing sync code. */
+function addTask(kind, title, detail, status = "waiting") {
+  const task = {
+    id: "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    kind, title, detail, status,
+    ts: Date.now(), updatedTs: Date.now(),
+    origin: deviceName(),
+  };
+  state.tasks = state.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled").slice(-9);
+  state.tasks.push(task);
+  saveAll();
+  scheduleSync();
+  return task;
+}
+function latestTask(kind) {
+  for (let i = state.tasks.length - 1; i >= 0; i--) {
+    const t = state.tasks[i];
+    if ((!kind || t.kind === kind) && t.status !== "done" && t.status !== "cancelled") return t;
+  }
+  return null;
+}
+function updateTask(id, patch) {
+  const t = state.tasks.find((x) => x.id === id);
+  if (!t) return;
+  Object.assign(t, patch, { updatedTs: Date.now() });
+  saveAll();
+  scheduleSync();
 }
 
 function applySynced(data) {
@@ -3086,6 +3580,17 @@ function applySynced(data) {
     if (data.profile.name && !state.profile.name) { state.profile.name = data.profile.name; changed = true; }
   }
   if (data.nickname && data.nickname !== state.nickname) { state.nickname = data.nickname; LS.set("nova.nickname", state.nickname); changed = true; }
+  if (Array.isArray(data.tasks)) {
+    const byId = new Map(state.tasks.map((t) => [t.id, t]));
+    for (const t of data.tasks) {
+      const mine = byId.get(t.id);
+      if (!mine || (t.updatedTs || t.ts || 0) >= (mine.updatedTs || mine.ts || 0)) { byId.set(t.id, t); changed = true; }
+    }
+    state.tasks = [...byId.values()]
+      .filter((t) => t.status !== "done" && t.status !== "cancelled" || Date.now() - (t.updatedTs || t.ts || 0) < 86400000)
+      .sort((a, b) => (b.updatedTs || b.ts) - (a.updatedTs || a.ts))
+      .slice(0, 10);
+  }
   if (changed) { saveAll(); renderHistory(); renderMessages(); }
   return changed;
 }
@@ -3265,12 +3770,18 @@ async function privateGate() {
 }
 
 function init() {
+  injectNovaMarks();
+  applyTheme();
+  wireConfirm();
   healProviderMismatch();
   // Retired/limited saved models → snap to a working one.
   if (state.provider === "gemini" && !MODELS.gemini.some((m) => m.id === state.model)) {
     state.model = "gemini-3.6-flash";
     LS.set("nova.model", state.model);
   }
+  // Reflect the persisted mode on the sidebar buttons.
+  document.querySelectorAll(".side-item[data-mode]").forEach((b) =>
+    b.classList.toggle("active", b.dataset.mode === state.mode));
   el.messages.classList.add("chat-in");
   // Wake/check the AI relay once so problems surface with clear guidance, not mid-chat.
   if (location.protocol !== "file:" && state.provider === "pollinations") {
@@ -3282,7 +3793,7 @@ function init() {
       setTimeout(() => toast("⚠️ AI relay unreachable — run `python serve.py` in the Nova folder, then use http://localhost:8080. Nova Lite still works offline.", "warn"), 1200);
     });
   }
-  document.documentElement.dataset.theme = state.theme;
+  applyTheme();
   updateModelSelect();
   wire();
   renderHistory();

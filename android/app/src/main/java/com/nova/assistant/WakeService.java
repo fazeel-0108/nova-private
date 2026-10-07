@@ -31,6 +31,11 @@ public class WakeService extends Service {
 
     private android.speech.SpeechRecognizer recognizer;
     private android.content.SharedPreferences prefs;
+    private android.media.AudioManager am;
+    private boolean beepMuted = false;
+
+    public static final String ACTION_PAUSE = "com.nova.assistant.PAUSE_WAKE";
+    public static final String ACTION_RESUME = "com.nova.assistant.RESUME_WAKE";
 
     @Override
     public IBinder onBind(Intent i) { return null; }
@@ -39,8 +44,49 @@ public class WakeService extends Service {
     public void onCreate() {
         super.onCreate();
         prefs = getSharedPreferences("nova", MODE_PRIVATE);
+        am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
         startAsForeground();
         startListening();
+    }
+
+    /* Android's recognizer plays a system "ding" at every session start —
+       with a continuous wake loop that becomes beep-after-beep. Mute the
+       media stream briefly around each start, but NEVER while the user is
+       actually playing music (isMusicActive guard). */
+    private void muteBeep() {
+        try {
+            if (am == null || am.isMusicActive()) return;
+            am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,
+                    android.media.AudioManager.ADJUST_MUTE, 0);
+            beepMuted = true;
+        } catch (Exception ignored) {}
+    }
+
+    private void unmuteBeep() {
+        try {
+            if (beepMuted && am != null) {
+                am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,
+                        android.media.AudioManager.ADJUST_UNMUTE, 0);
+            }
+            beepMuted = false;
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && ACTION_PAUSE.equals(intent.getAction())) {
+            // App screen is open — IT is listening now; stop the duplicate mic.
+            prefs.edit().putBoolean("paused", true).apply();
+            if (recognizer != null) { try { recognizer.destroy(); } catch (Exception ignored) {} recognizer = null; }
+            unmuteBeep();
+            return START_STICKY;
+        }
+        if (intent != null && ACTION_RESUME.equals(intent.getAction())) {
+            prefs.edit().putBoolean("paused", false).apply();
+            startListening();
+            return START_STICKY;
+        }
+        return START_STICKY;
     }
 
     private void startAsForeground() {
@@ -104,9 +150,11 @@ public class WakeService extends Service {
             public void onError(int error) { restart(); }
 
             private void restart() {
-                if (prefs.getBoolean("enabled", true)) {
+                if (prefs.getBoolean("enabled", true) && !prefs.getBoolean("paused", false)) {
                     android.os.Handler h = new android.os.Handler(getMainLooper());
-                    h.postDelayed(() -> { if (prefs.getBoolean("enabled", true)) startListening(); }, 250);
+                    h.postDelayed(() -> {
+                        if (prefs.getBoolean("enabled", true) && !prefs.getBoolean("paused", false)) startListening();
+                    }, 250);
                 }
             }
         });
@@ -117,7 +165,9 @@ public class WakeService extends Service {
         si.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, "en-US");
         si.putExtra(android.speech.RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
         si.putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+        muteBeep();
         recognizer.startListening(si);
+        new android.os.Handler(getMainLooper()).postDelayed(this::unmuteBeep, 700);
     }
 
     /** WAKE WORD HEARD — bring Nova to the front, screen on. */
@@ -138,6 +188,7 @@ public class WakeService extends Service {
 
     @Override
     public void onDestroy() {
+        unmuteBeep();
         if (recognizer != null) { try { recognizer.destroy(); } catch (Exception ignored) {} }
         super.onDestroy();
     }

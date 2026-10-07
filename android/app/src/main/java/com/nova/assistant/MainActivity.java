@@ -176,7 +176,32 @@ public class MainActivity extends Activity {
         si.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         si.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
         si.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        muteBeep();
         recog.startListening(si);
+        new android.os.Handler(getMainLooper()).postDelayed(this::unmuteBeep, 700);
+    }
+
+    /* Same ding-suppression as WakeService: Android plays a system beep at
+       every recognizer start; hands-free cycles would beep constantly. */
+    private boolean beepMuted = false;
+    private void muteBeep() {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+            if (am == null || am.isMusicActive()) return;
+            am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,
+                    android.media.AudioManager.ADJUST_MUTE, 0);
+            beepMuted = true;
+        } catch (Exception ignored) {}
+    }
+    private void unmuteBeep() {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+            if (beepMuted && am != null) {
+                am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,
+                        android.media.AudioManager.ADJUST_UNMUTE, 0);
+            }
+            beepMuted = false;
+        } catch (Exception ignored) {}
     }
 
     private void evalJs(String js) {
@@ -189,10 +214,15 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onResume() { super.onResume(); if (web != null) web.onResume(); }
+    protected void onResume() { super.onResume(); if (web != null) web.onResume();
+        // App is in front — it listens now. Pause the background wake mic so
+        // there is exactly ONE active recognizer (and no double beeps).
+        startService(new Intent(this, WakeService.class).setAction(WakeService.ACTION_PAUSE)); }
 
     @Override
-    protected void onPause() { super.onPause(); if (web != null) web.onPause(); }
+    protected void onPause() { super.onPause(); if (web != null) web.onPause();
+        // Leaving the app — background wake word takes the mic back.
+        startService(new Intent(this, WakeService.class).setAction(WakeService.ACTION_RESUME)); }
 
     @Override
     protected void onDestroy() {

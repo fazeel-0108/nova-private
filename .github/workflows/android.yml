@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -30,7 +30,26 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build-log.txt
+          exit ${PIPESTATUS[0]}
+
+      # If the build fails, the exact error is printed on the run's Summary
+      # page (top box) — no hunting through collapsed log steps.
+      - name: Print failure reason
+        if: failure()
+        run: |
+          echo "### Build failed — last 80 log lines" >> $GITHUB_STEP_SUMMARY
+          echo '\`\`\`' >> $GITHUB_STEP_SUMMARY
+          tail -n 80 android/build-log.txt >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "no build log — failure happened before Gradle started" >> $GITHUB_STEP_SUMMARY
+          echo '\`\`\`' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: android/build-log.txt
+          if-no-files-found: ignore
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

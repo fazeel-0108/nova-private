@@ -1679,7 +1679,17 @@ function homeGreeting() {
   const part = h < 5 ? "Working late" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : h < 22 ? "Good evening" : "Working late";
   return state.profile.name ? `${part}, ${state.profile.name}` : part;
 }
+/* UI state machine: EMPTY (search-first) → SUBMITTING → CONVERSATION.
+   One composer element lives in two positions; uiMode is the single
+   source of truth for which position — never CSS-hack detection. */
+let uiMode = "EMPTY";   // EMPTY | SUBMITTING | CONVERSATION
+function setUiMode(m) {
+  uiMode = m;
+  document.body.dataset.ui = m === "CONVERSATION" ? "chat" : "home";
+}
+
 function showHome() {
+  setUiMode("EMPTY");
   el.messages.classList.add("hidden");
   el.home.classList.remove("hidden");
   el.homeSlot.appendChild(el.composer);
@@ -1692,16 +1702,38 @@ function showHome() {
   });
 }
 
-function hideHome() {
-  if (el.home.classList.contains("hidden")) return;
-  el.home.classList.add("leaving");
-  setTimeout(() => {
-    el.home.classList.add("hidden");
-    el.home.classList.remove("in", "leaving");
-    el.messages.classList.remove("hidden");
-    el.messages.after(el.composer); // dock composer back BELOW the messages
-  }, 170);
+/* The dock: same composer, two homes. When the first query is submitted the
+   centered search box physically travels down to the bottom composer slot —
+   one FLIP-animated transform, 380ms, no teleport, no second component. */
+function dockComposer() {
+  if (uiMode === "CONVERSATION") return;
+  setUiMode("SUBMITTING");
+  const c = el.composer, home = el.home;
+  const from = c.getBoundingClientRect();
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;visibility:hidden;pointer-events:none;";
+  c.parentNode.insertBefore(probe, c);
+  el.messages.after(c);                       // final docked position
+  const to = c.getBoundingClientRect();
+  c.style.transform = `translate(0px, ${from.top - to.top}px)`;
+  c.style.transition = "none";
+  probe.remove();
+  home.classList.add("leaving");
+  requestAnimationFrame(() => {
+    c.style.transition = "transform 380ms cubic-bezier(.32,.72,.24,1), opacity 380ms ease";
+    c.style.transform = "";
+    c.style.opacity = "1";
+    setTimeout(() => {
+      c.style.transition = ""; c.style.transform = ""; c.style.opacity = "";
+      home.classList.add("hidden");
+      home.classList.remove("in", "leaving");
+      el.messages.classList.remove("hidden");
+      setUiMode("CONVERSATION");
+      scrollBottom();
+    }, 390);
+  });
 }
+function hideHome() { dockComposer(); }
 
 function isHome() { return !el.home.classList.contains("hidden"); }
 
@@ -1894,6 +1926,113 @@ function setHeard(txt) {
   if (jEl.heard) jEl.heard.textContent = txt || "";
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   VOICE SESSION STATE MACHINE — single source of truth for mic, TTS
+   and voice-session lifecycle.
+
+     IDLE → OPENING → REQUESTING_MIC → LISTENING → PROCESSING
+          → THINKING → EXECUTING → SPEAKING → COOLDOWN → LISTENING | IDLE
+
+   THE ONE RULE:  SPEAKING ≠ LISTENING.
+   While TTS plays, the recognizer is fully STOPPED (not ignored —
+   stopped), the raw mic stream is gated, and all buffers are flushed.
+   Listening resumes only from the REAL speechSynthesis `onend` event,
+   after a short cooldown, in a brand-new recognition session.
+   Every session owns a monotonic id: callbacks from older sessions
+   are dropped (`vStale`), so echo/repeat can never re-enter.
+   ═══════════════════════════════════════════════════════════════════ */
+const VoiceFSM = {
+  phase: "IDLE",
+  session: 1,              // increments on every session start/teardown
+  ttsActive: false,        // a TTS utterance is currently playing (or queued)
+  cooldownMs: 450,         // settle time after real TTS end before mic re-opens
+  lastCommand: { text: "", ts: 0 },   // duplicate-command guard
+};
+const VOICE_LABELS = {
+  IDLE: "", OPENING: "Preparing…", REQUESTING_MIC: "Requesting microphone…",
+  LISTENING: "Listening…", PROCESSING: "Understanding…", THINKING: "Thinking…",
+  EXECUTING: "Working…", SPEAKING: "Speaking…", COOLDOWN: "One moment…",
+  COMPLETED: "Done", ERROR: "Something went wrong",
+};
+function voicePhase(p) {
+  VoiceFSM.phase = p;
+  setVoicePhase(VOICE_LABELS[p] || p);
+  setHudState(p === "LISTENING" ? "listening"
+    : p === "SPEAKING" ? "speaking"
+    : (p === "PROCESSING" || p === "THINKING" || p === "EXECUTING") ? "processing"
+    : "idle");
+}
+function vSession() { return VoiceFSM.session; }
+function vStale(s) { return s !== VoiceFSM.session; }
+function vNextSession() { return ++VoiceFSM.session; }   // closes every old session
+
+/* JARVIS overlay state hook (dataset for CSS, sub-text for the human). */
+function setVoiceState(s, sub) {
+  const ov = jEl.overlay || document.getElementById("jarvis");
+  if (ov) ov.dataset.state = s;
+  if (sub) setHeard(sub);
+}
+
+/* ---- Recognition lifecycle: exactly ONE recognizer may ever exist ---- */
+let recogActive = false;
+function stopRecog() {
+  if (recog) {
+    const r = recog;
+    recog = null;
+    r.onresult = null; r.onend = null; r.onerror = null; r.onspeechstart = null;
+    try { r.abort(); } catch { try { r.stop(); } catch { /* already dead */ } }
+  }
+  recogActive = false;
+}
+function flushVoiceBuffers() {
+  /* Per-session closures die with the recognizer; drop the shared bits too. */
+  recog = null;
+  VoiceFSM.pendingCommand = "";
+}
+
+/* Real-TTS-end driven re-arm: TTS finished → cooldown → flush → LISTENING. */
+function ttsCooldownRearm() {
+  const s = vNextSession();          // kill every callback from the spoken era
+  stopRecog();
+  voicePhase("COOLDOWN");
+  setTimeout(() => {
+    if (vStale(s) || VoiceFSM.ttsActive) return;      // new TTS began meanwhile
+    micGate(true);
+    flushVoiceBuffers();
+    if (voiceChat && !state.busy) {
+      voicePhase("LISTENING");
+      listenOnce();
+    } else if (state.listening) {
+      voicePhase("LISTENING");
+      restartHandsFreeRecog();
+    } else {
+      voicePhase("IDLE");
+      micGate(false);
+    }
+  }, VoiceFSM.cooldownMs);
+}
+
+/* Duplicate-command protection: the same transcript delivered twice
+   (double recognition events, echo, retries) executes once. */
+function voiceCommandDuplicate(text) {
+  const t = (text || "").trim().toLowerCase();
+  if (!t) return false;
+  if (t === VoiceFSM.lastCommand.text && Date.now() - VoiceFSM.lastCommand.ts < 4000) return true;
+  VoiceFSM.lastCommand = { text: t, ts: Date.now() };
+  return false;
+}
+
+/* Barge-in: explicit user tap on the voice overlay stops TTS instantly
+   and opens a clean listening session. Noise never interrupts Nova. */
+function userBargeIn() {
+  if (!VoiceFSM.ttsActive && !state.speaking) return;
+  try { speechSynthesis.cancel(); } catch { /* nothing playing */ }
+  VoiceFSM.ttsActive = false;
+  state.speaking = false;
+  toast("Interrupted", "ok");
+  ttsCooldownRearm();
+}
+
 async function openJarvis() {
   jEl.overlay = jEl.overlay || j$("jarvis");
   jEl.viz = jEl.viz || j$("jarvis-viz");
@@ -1902,13 +2041,15 @@ async function openJarvis() {
   jEl.exit = jEl.exit || j$("jarvis-exit");
 
   jarvisOverlayOpen = true;
+  vNextSession();                    // fresh session; any old callbacks die
   jEl.overlay.classList.remove("hidden");
   requestAnimationFrame(() => jEl.overlay.classList.add("open"));
-  setVoicePhase("Preparing…");
+  voicePhase("OPENING");
   setHeard("");
   startVoiceViz();
 
   // Real mic first — never show "Listening" without one.
+  voicePhase("REQUESTING_MIC");
   try {
     await ensureMic();
   } catch (err) {
@@ -1928,7 +2069,7 @@ async function openJarvis() {
   }
   micGate(true);
 
-  setVoicePhase("Listening…");
+  voicePhase("LISTENING");
   setVoiceState("listening");
   startVoiceChatInJarvis();
 }
@@ -1938,8 +2079,14 @@ function closeJarvis() {
   jEl.overlay.classList.remove("open");
   setTimeout(() => jEl.overlay.classList.add("hidden"), 320);
   cancelAnimationFrame(jarvisRAF);
+  vNextSession();                    // orphan every pending voice callback
+  stopRecog();
   endVoiceChat("Voice closed");
+  try { speechSynthesis.cancel(); } catch { /* nothing playing */ }
+  VoiceFSM.ttsActive = false;
+  state.speaking = false;
   micGate(false);
+  voicePhase("IDLE");
   setVoiceState("idle");
 }
 
@@ -2233,14 +2380,23 @@ function speak(text) {
   const clean = cleanForSpeech(text);
   if (!clean) return;
   speechSynthesis.cancel();
+  VoiceFSM.ttsActive = true;                 // mic lock begins BEFORE audio starts
+  pauseRecognitionForTTS();                  // stop capture — the one rule
   const u = new SpeechSynthesisUtterance(clean);
   if (jarvisVoice) u.voice = jarvisVoice;
   u.rate = 1.0; u.pitch = 0.82; u.volume = 1.0;   // the JARVIS depth
-  u.onstart = () => { state.speaking = true; pauseRecognitionForTTS(); setHudState("speaking"); setVoiceState("speaking", clean.slice(0, 120)); };
+  u.onstart = () => {
+    state.speaking = true;
+    voicePhase("SPEAKING");
+    setHudState("speaking");
+    setVoiceState("speaking", clean.slice(0, 120));
+  };
   u.onend = () => {
+    if (!VoiceFSM.ttsActive) return;         // cancel() also fires onend — ignore ghosts
     state.speaking = false;
-    setTimeout(() => { if (!state.speaking && !state.busy) setHudState("idle"); }, 300); // echo-gate buffer
-    resumeRecognitionAfterTTS();                       // hands-free restarts listening here
+    VoiceFSM.ttsActive = false;
+    setTimeout(() => { if (!state.speaking && !state.busy) setHudState("idle"); }, 300);
+    resumeRecognitionAfterTTS();             // real TTS end → cooldown → clean LISTENING
   };
   speechSynthesis.speak(u);
 }
@@ -2248,36 +2404,36 @@ function speak(text) {
 function speakNow(text) {
   if (!("speechSynthesis" in window)) return;
   speechSynthesis.cancel();
+  VoiceFSM.ttsActive = true;
+  pauseRecognitionForTTS();
   const u = new SpeechSynthesisUtterance(cleanForSpeech(text));
   if (jarvisVoice) u.voice = jarvisVoice;
   u.rate = 1.0; u.pitch = 0.82;
-  u.onstart = () => { state.speaking = true; pauseRecognitionForTTS(); setHudState("speaking"); };
-  u.onend = () => { state.speaking = false; setTimeout(() => { if (!state.speaking && !state.busy) setHudState("idle"); }, 300); resumeRecognitionAfterTTS(); };
+  u.onstart = () => { state.speaking = true; voicePhase("SPEAKING"); setHudState("speaking"); };
+  u.onend = () => {
+    if (!VoiceFSM.ttsActive) return;         // ghost onend from cancel()
+    state.speaking = false;
+    VoiceFSM.ttsActive = false;
+    setTimeout(() => { if (!state.speaking && !state.busy) setHudState("idle"); }, 300);
+    resumeRecognitionAfterTTS();
+  };
   speechSynthesis.speak(u);
 }
 
 /* ECHO KILL: micGate() mutes the raw stream, but SpeechRecognition (Chrome's
    engine) keeps its own tap on the mic — so it still heard Nova's replies.
-   While Nova speaks, we fully stop the recognizer and restart it afterwards. */
-let recogPaused = false;
-let recogPauseBlobs = [];   // words captured while muting (should be none, but just in case)
+   While Nova speaks we go further: the recognizer is fully STOPPED and its
+   session closed, so no callback can ever fire. Restart happens only from
+   the REAL TTS onend → cooldown → clean new session. */
 function pauseRecognitionForTTS() {
-  if (recog && state.listening) {
-    recogPaused = true;
-    try { recog.onend = null; recog.abort(); } catch { try { recog.stop(); } catch { /* ignore */ } }
-  }
-  micGate(false);
+  VoiceFSM.ttsActive = true;
+  vNextSession();            // close the listening session for good
+  stopRecog();               // stop capture — not ignore, STOP
+  micGate(false);            // mute the raw stream too
 }
 function resumeRecognitionAfterTTS() {
-  micGate(true);
-  if (!recogPaused || !state.listening || (!SR && !NATIVE_BRIDGE)) { recogPaused = false; return; }
-  recogPaused = false;
-  const tryStart = (tries) => {
-    if (!state.listening) return;
-    try { recog.start(); }
-    catch { if (tries > 0) setTimeout(() => tryStart(tries - 1), 250); }
-  };
-  tryStart(6);
+  VoiceFSM.ttsActive = false;
+  ttsCooldownRearm();        // real-TTS-end driven: cooldown → flush → LISTENING
 }
 
 /* ═══════ PERSISTENT MICROPHONE ═══════
@@ -2293,8 +2449,18 @@ async function ensureMic() {
   if (waveStream && waveStream.active) return waveStream;
   if (micOpening) return micOpening;
   micOpening = (async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Browser/OS audio processing ON — but the app-level FSM (stop-while-speaking)
+    // is the real fix; these constraints are a supporting layer, never the answer.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
     waveStream = stream;
+    // Bluetooth/wired device pulled out mid-session → stop cleanly, show real error.
+    for (const t of stream.getAudioTracks()) {
+      t.onended = () => {
+        if (voiceChat || state.listening) endVoiceChat("Audio device disconnected — voice stopped");
+      };
+    }
     if (!waveCtx) waveCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (waveCtx.state === "suspended") await waveCtx.resume();
     const src = waveCtx.createMediaStreamSource(stream);
@@ -2394,86 +2560,113 @@ async function startMicDictation() {
   await listenOnce();
 }
 
-/* One listen→think→speak cycle; re-arms itself while voiceChat is true. */
+/* One listen→think→speak cycle; re-arms itself while voiceChat is true.
+   Session-guarded: every callback captures its session id and is dropped
+   the moment a new session begins (SPEAKING, closeJarvis, teardown). */
 async function listenOnce() {
   if (!voiceChat || state.busy || voiceThinking) return;
+  if (recogActive) return;                       // exactly ONE recognizer, ever
+  const my = vSession();
   return new Promise((resolve) => {
-    stopListening();
-    recog = createRecog();
-    recog.lang = navigator.language || "en-US";
-    recog.interimResults = true;
-    recog.continuous = false;
+    stopListening();                             // hands-free yields the mic
+    stopRecog();                                 // clean slate — no stale listeners
+    const r = createRecog();
+    recog = r;
+    r.lang = navigator.language || "en-US";
+    r.interimResults = true;
+    r.continuous = false;
     let finalText = "";
-    let gotSpeech = false;
+    const alive = () => !vStale(my) && recog === r && voiceChat;   // session-owner check
 
-    startVoiceUI("Listening…");
+    startVoiceUI(VOICE_LABELS.LISTENING);
+    micGate(true);
+    voicePhase("LISTENING");
 
-    recog.onspeechstart = () => setWaveText("I'm listening…");
-    recog.onresult = (e) => {
-      if (state.speaking || voiceThinking) return;   // ECHO GUARD: never accept words while Nova talks
-      gotSpeech = true;
+    r.onspeechstart = () => { if (alive()) setWaveText("I'm listening…"); };
+    r.onresult = (e) => {
+      if (!alive()) return;                              // old session → ignore
+      if (VoiceFSM.ttsActive || state.speaking) return;  // belt & braces echo guard
       let interim = "";
-      for (const r of e.results) {
-        if (r.isFinal) finalText += r[0].transcript + " ";
-        else interim += r[0].transcript;
+      for (const res of e.results) {
+        if (res.isFinal) finalText += res[0].transcript + " ";
+        else interim += res[0].transcript;
       }
       if (interim || finalText) setWaveText("“" + (finalText + interim).trim().slice(-42) + "”");
     };
-    recog.onend = async () => {
+    r.onend = async () => {
+      recogActive = false;                               // recognizer is done by definition
+      if (!alive()) return resolve();                    // session closed → do NOTHING
       const said = finalText.trim();
-      if (!voiceChat) { stopVoiceUI(); return resolve(); }
       if (!said) {
-        // silence — loop back to listening (unless Nova is mid-reply)
-        if (voiceThinking || state.speaking) { resolve(); return; }
-        setWaveText("Listening…");
+        if (VoiceFSM.ttsActive || state.speaking) return resolve();  // TTS owns the mic
+        setWaveText(VOICE_LABELS.LISTENING);
         resolve();
-        setTimeout(() => voiceChat && listenOnce(), 350);
+        setTimeout(() => { if (alive()) listenOnce(); }, 350);
         return;
       }
-      // send it hands-free — gate the mic so Nova never hears itself
-      voiceThinking = true;
-      micGate(false);
-      setWaveText("Thinking…");
-      await handleSend(said, { fromVoice: true });
-      voiceThinking = false;
-      if (voiceChat) {
-        // resume AFTER the reply finished speaking + a 300ms safety buffer
-        const resume = () => { if (voiceChat) { micGate(true); setWaveText("Listening…"); listenOnce(); } };
-        if (state.speaking) {
-          const waitEnd = setInterval(() => {
-            if (!state.speaking) { clearInterval(waitEnd); setTimeout(resume, 300); }
-          }, 150);
-          setTimeout(() => clearInterval(waitEnd), 30000); // hard cap
-        } else {
-          setTimeout(resume, 300);
-        }
+      if (voiceCommandDuplicate(said)) {                 // same command twice → run once
+        setWaveText(VOICE_LABELS.LISTENING);
+        resolve();
+        setTimeout(() => { if (alive()) listenOnce(); }, 400);
+        return;
       }
+      /* USER SPEECH → PROCESSING: mic OFF before anything else can run. */
+      vNextSession();            // this listening session is closed
+      stopRecog();
+      micGate(false);
+      voiceThinking = true;
+      setWaveText(VOICE_LABELS.PROCESSING);
+      voicePhase("PROCESSING");
+      try {
+        voicePhase("THINKING");
+        await handleSend(said, { fromVoice: true });   // speaking starts inside speak()
+        voicePhase(state.speaking ? "SPEAKING" : "COOLDOWN");
+      } catch {
+        voicePhase("ERROR");
+      }
+      voiceThinking = false;
       resolve();
+      /* Re-arm belongs to speak()'s REAL onend → ttsCooldownRearm().
+         This fallback only fires if nothing was spoken (autospeak off). */
+      setTimeout(() => {
+        if (!voiceChat || VoiceFSM.ttsActive || state.speaking || voiceThinking) return;
+        micGate(true);
+        voicePhase("LISTENING");
+        listenOnce();
+      }, 500);
     };
-    recog.onerror = (ev) => {
+    r.onerror = (ev) => {
+      recogActive = false;
       const code = ev && ev.error;
+      if (!alive()) return resolve();
       if (code === "not-allowed" || code === "service-not-allowed") {
-        // Permission denied for SpeechRecognition — tell the user exactly what to do.
+        voicePhase("ERROR");
         endVoiceChat("Mic blocked — click the 🔒 in the address bar → allow Microphone → reload");
         toast("Mic blocked — allow it in the address bar, then reload", "err");
         setVoiceState("mic-error");
       } else if (code === "no-speech") {
-        if (voiceChat) { setWaveText("Listening…"); setTimeout(() => voiceChat && listenOnce(), 700); }
+        setWaveText(VOICE_LABELS.LISTENING);
+        setTimeout(() => { if (alive()) listenOnce(); }, 700);
       } else if (code === "network") {
+        voicePhase("ERROR");
         endVoiceChat("Voice needs internet — check your connection");
       } else if (code === "audio-capture") {
+        voicePhase("ERROR");
         endVoiceChat("No microphone found");
       } else {
-        if (voiceChat) { setWaveText("Listening…"); setTimeout(() => voiceChat && listenOnce(), 900); }
+        setWaveText(VOICE_LABELS.LISTENING);
+        setTimeout(() => { if (alive()) listenOnce(); }, 900);
       }
       resolve();
     };
-    try { recog.start(); } catch { resolve(); }
+    try { r.start(); recogActive = true; } catch { stopRecog(); resolve(); }
   });
 }
 
 function endVoiceChat(msg) {
   voiceChat = false;
+  voiceThinking = false;
+  vNextSession();            // orphan any pending voice callbacks
   stopVoiceUI();
   stopListening();
   if (msg) toast(msg);
@@ -2481,22 +2674,38 @@ function endVoiceChat(msg) {
 
 el.waveText.onclick = () => endVoiceChat("Voice chat ended ✓");
 
-/* Hands-free: continuous listening for "<Nickname>, <command>"
-   Upgraded: auto-rearms forever, routes the reactor, and can auto-start. */
+/* Hands-free: continuous listening for "<Nickname>, <command>".
+   One session owns the recognizer. While Nova speaks the recognizer is
+   STOPPED (pauseRecognitionForTTS) and restarted only from the real TTS
+   end via ttsCooldownRearm → restartHandsFreeRecog. */
 function toggleHandsFree() {
-  if (state.listening) { stopListening(); setHudState("idle"); return; }
+  if (state.listening) { stopListening(); setHudState("idle"); voicePhase("IDLE"); return; }
   if (!SR && !NATIVE_BRIDGE) { toast("Hands-free needs Chrome/Edge — or the Nova app", "warn"); return; }
-  recog = createRecog();
-  recog.lang = navigator.language || "en-US";
-  recog.continuous = true;
-  recog.interimResults = false;
+  vNextSession();
+  state.listening = true;
   const nick = norm(state.nickname).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   el.listenBanner.classList.remove("hidden");
   el.wakeName.textContent = state.nickname;
-  state.listening = true;
   setHudState("listening");
+  voicePhase("LISTENING");
+  startHandsFreeRecog(nick);
+  toast(`Hands-free on — say “${state.nickname}, …”`, "ok");
+  keepAwake(true);
+}
 
-  recog.onresult = (e) => {
+function startHandsFreeRecog(nick) {
+  stopRecog();
+  const my = vSession();
+  const r = createRecog();
+  recog = r;
+  r.lang = navigator.language || "en-US";
+  r.continuous = true;
+  r.interimResults = false;
+  const alive = () => !vStale(my) && recog === r && state.listening;
+
+  r.onresult = (e) => {
+    if (!alive()) return;
+    if (VoiceFSM.ttsActive || state.speaking || voiceThinking) return;   // never while Nova talks
     for (let i = e.resultIndex; i < e.results.length; i++) {
       if (!e.results[i].isFinal) continue;
       const heard = norm(e.results[i][0].transcript);
@@ -2506,20 +2715,34 @@ function toggleHandsFree() {
       const cmd = m[1].trim();
       addBubble("user", `🎙️ “${e.results[i][0].transcript.trim()}”`);
       if (cmd.length <= 1) {
-        // Just the wake name — greet, then open the floor.
         const greeting = `Yes ${state.nickname === "Nova" ? "sir" : ""}, how can I help you today?`.replace(/\s+/g, " ");
+        vNextSession(); stopRecog(); micGate(false);         // mic OFF before Nova speaks
         speakNow(greeting);
         addBubble("ai", `✦ ${greeting}`);
-        setVoiceState("listening", "waiting for your command…");
+        voicePhase("SPEAKING");
       } else {
-        handleSend(cmd);
+        if (voiceCommandDuplicate(cmd)) continue;            // run once, ever
+        vNextSession(); stopRecog(); micGate(false);         // mic OFF before processing
+        voiceThinking = true;
+        voicePhase("PROCESSING");
+        Promise.resolve(handleSend(cmd))
+          .catch(() => voicePhase("ERROR"))
+          .finally(() => {
+            voiceThinking = false;
+            if (VoiceFSM.ttsActive || state.speaking) return; // speak() owns the re-arm
+            ttsCooldownRearm();                               // nothing was spoken → re-arm
+          });
       }
     }
   };
-  recog.onend = () => {
-    if (state.listening) { setTimeout(() => { if (state.listening) { try { recog.start(); } catch { /* restarting */ } } }, 200); }
+  r.onend = () => {
+    // Legit silence-restart — NEVER while TTS is active or the session is closed.
+    if (alive() && !VoiceFSM.ttsActive && !state.speaking && !voiceThinking) {
+      setTimeout(() => { if (alive() && !VoiceFSM.ttsActive) startHandsFreeRecog(nick); }, 250);
+    }
   };
-  recog.onerror = (ev) => {
+  r.onerror = (ev) => {
+    if (!alive()) return;
     if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
       toast("Mic blocked — click 🔒 in the address bar → allow Microphone → reload", "err");
       stopListening();
@@ -2527,15 +2750,22 @@ function toggleHandsFree() {
       toast("Voice needs internet — retrying", "warn");
     }
   };
-  try { recog.start(); toast(`Hands-free on — say “${state.nickname}, …”`, "ok"); keepAwake(true); }
-  catch { stopListening(); }
+  try { r.start(); recogActive = true; } catch { stopRecog(); }
+}
+
+/* Fresh hands-free session after TTS cooldown (called by ttsCooldownRearm). */
+function restartHandsFreeRecog() {
+  if (!state.listening || voiceChat) return;
+  const nick = norm(state.nickname).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  startHandsFreeRecog(nick);
+  voicePhase("LISTENING");
 }
 
 function stopListening() {
   state.listening = false;
   el.listenBanner.classList.add("hidden");
   el.mic.classList.remove("listening");
-  if (recog) { try { recog.stop(); } catch { /* ignore */ } recog = null; }
+  stopRecog();                 // single choke point: no recognizer survives
   keepAwake(false);
   setHudState("idle");
 }
@@ -3216,7 +3446,17 @@ function wire() {
   el.mic.onclick = () => openJarvis();
   el.listenStop.onclick = stopListening;
   const jExit = j$("jarvis-exit");
-  if (jExit) jExit.onclick = closeJarvis;
+  if (jExit) {
+    jExit.onclick = closeJarvis;
+    jExit.addEventListener("click", (e) => e.stopPropagation());   // exit never doubles as barge-in
+  }
+  // Barge-in: an explicit tap on the voice screen while Nova speaks stops TTS
+  // instantly and opens a clean listening session. Silence/noise never does.
+  const jOverlay = j$("jarvis");
+  if (jOverlay) jOverlay.addEventListener("click", () => {
+    if (!jarvisOverlayOpen) return;
+    if (VoiceFSM.ttsActive || state.speaking) userBargeIn();
+  });
 
   /* Command palette + global keyboard shortcuts */
   document.addEventListener("keydown", (e) => {

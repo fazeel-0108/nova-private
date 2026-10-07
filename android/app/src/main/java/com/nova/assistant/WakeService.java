@@ -133,9 +133,8 @@ public class WakeService extends Service {
         tg.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 150);
     }
 
-    private void setTurnScreenOn() {
-        // android:turnScreenOn in the manifest handles this on API 27+;
-        // nothing extra needed here. Kept as a no-op placeholder.
+    /* Screen-on is handled by the manifest's android:turnScreenOn="true";
+       no extra code needed. */
 
     @Override
     public void onDestroy() {

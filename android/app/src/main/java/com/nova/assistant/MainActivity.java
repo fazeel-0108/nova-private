@@ -101,7 +101,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void stop() {
-            runOnUiThread(() -> { listening = false; if (recog != null) { try { recog.stop(); } catch (Exception ignored) {} } });
+            runOnUiThread(() -> { listening = false; if (recog != null) { try { recog.cancel(); } catch (Exception ignored) {} } });
         }
 
         @JavascriptInterface

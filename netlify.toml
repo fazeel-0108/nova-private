@@ -24,6 +24,13 @@
   status = 200
   force = true
 
+# Real provider health probe (same function, GET)
+[[redirects]]
+  from = "/api/health"
+  to = "/.netlify/functions/chat"
+  status = 200
+  force = true
+
 # Cross-device sync store (chat/notes/memory merge)
 [[redirects]]
   from = "/api/sync"

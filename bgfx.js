@@ -248,6 +248,15 @@
 
   const NovaFX = {
     state(name) {
+      // Extended REAL states: error/waiting map onto the shader's actual
+      // controls (warm tint, glow, spin) — never fake motion.
+      if (name === "error" || name === "waiting" || name === "executing") {
+        state = name;
+        glowT = name === "error" ? 1.05 : name === "executing" ? 1.6 : 1.15;
+        spinT = name === "executing" ? 2.6 : name === "error" ? 0.5 : 0.8;
+        warmT = name === "error" ? 0.95 : name === "waiting" ? 0.35 : 0.85;
+        return;
+      }
       state = (name === "listening" || name === "processing" || name === "speaking") ? name : "idle";
       glowT = state === "processing" ? 1.5 : state === "listening" ? 1.25 : state === "speaking" ? 1.35 : 1;
       spinT = state === "processing" ? 2.4 : 1;
@@ -279,10 +288,11 @@
 
     glow += (glowT - glow) * 0.06;
     glowT += (1 - glowT) * 0.012;
+    const sustained = state === "processing" || state === "executing" || state === "error" || state === "waiting";
     spinM += (spinT - spinM) * 0.05;
-    if (state !== "processing") spinT = 1;
+    if (!sustained) spinT = 1;
     warm += (warmT - warm) * 0.06;
-    if (state !== "processing") warmT = 0;
+    if (!sustained) warmT = 0;
 
     // ripples expand + fade
     for (const rp of rips) {

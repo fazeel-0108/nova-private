@@ -1,19 +1,51 @@
-// Vercel serverless function: proxies /api/chat to the free Pollinations AI.
-// Pollinations blocks direct browser calls but allows server-to-server ones.
+// Vercel serverless function: server-side brain relay (mirrors Netlify).
+// Provider keys live in environment variables — never in the frontend.
+const POLLINATIONS = "https://text.pollinations.ai/openai";
+const EP = {
+  tokenharbor: "https://tokenharbor.ai/v1/chat/completions",
+  groq: "https://api.groq.com/openai/v1/chat/completions",
+  openrouter: "https://openrouter.ai/api/v1/chat/completions",
+  cleanapis: "https://cleanapis.com/v1/chat/completions",
+};
+const DEFAULT_MODEL = {
+  tokenharbor: "deepseek-v4.1-flash:free",
+  groq: "openai/gpt-oss-20b",
+  openrouter: "nvidia/nemotron-3-super-120b-a12b:free",
+  cleanapis: "deepseek-v4-flash-0731",
+  pollinations: "openai",
+};
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
-  try {
-    const upstream = await fetch("https://text.pollinations.ai/openai", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...(req.body || {}), stream: false }),
-    });
-    const data = await upstream.json();
-    res.status(upstream.status).setHeader("Content-Type", "application/json").json(data);
-  } catch (e) {
-    res.status(502).json({ error: "proxy failed: " + e.message });
+  const body = req.body || {};
+  const requested = body.provider || "auto";
+  const k = {
+    tokenharbor: [process.env.TOKENHARBOR_KEY_1, process.env.TOKENHARBOR_KEY_2].filter(Boolean),
+    groq: process.env.GROQ_KEY ? [process.env.GROQ_KEY] : [],
+    openrouter: process.env.OPENROUTER_KEY ? [process.env.OPENROUTER_KEY] : [],
+    cleanapis: process.env.CLEANAPIS_KEY ? [process.env.CLEANAPIS_KEY] : [],
+  };
+  const chain = requested === "tokenharbor" || requested === "groq" || requested === "openrouter" || requested === "cleanapis"
+    ? [...(k[requested].length ? [{ provider: requested, endpoint: EP[requested], keys: k[requested], model: body.model && body.model !== "auto" ? body.model : DEFAULT_MODEL[requested] }] : []), { provider: "pollinations", endpoint: POLLINATIONS, keys: [""], model: DEFAULT_MODEL.pollinations }]
+    : [{ provider: "pollinations", endpoint: POLLINATIONS, keys: [""], model: DEFAULT_MODEL.pollinations }, ...(k.groq.length ? [{ provider: "groq", endpoint: EP.groq, keys: k.groq, model: DEFAULT_MODEL.groq }] : [])];
+  let lastErr = null;
+  for (const hop of chain) {
+    for (const key of hop.keys) {
+      try {
+        const upstream = await fetch(hop.endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(key ? { Authorization: "Bearer " + key } : {}) },
+          body: JSON.stringify({ model: hop.model, messages: body.messages || [], stream: false }),
+        });
+        const data = await upstream.json();
+        if (!upstream.ok || data.error) throw new Error(String((data.error && (data.error.message || JSON.stringify(data.error))) || "HTTP " + upstream.status).slice(0, 180));
+        res.status(200).json({ ...data, meta: { requestedProvider: requested, requestedModel: body.model || null, actualProvider: hop.provider, actualModel: hop.model, fallbackUsed: requested !== "auto" && hop.provider !== requested } });
+        return;
+      } catch (e) { lastErr = e.message; }
+    }
   }
+  res.status(502).json({ error: "all providers failed" + (lastErr ? ": " + lastErr : "") });
 }

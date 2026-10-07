@@ -19,9 +19,9 @@ const LS = {
 };
 
 const state = {
-  provider: LS.get("nova.provider", "tokenharbor"),          // default brain: TH free Qwen
+  provider: LS.get("nova.provider", "auto"),          // default brain: Nova Auto (server-routed)
+  model: LS.get("nova.model", "auto"),
   apiKey: LS.get("nova.key", ""),
-  model: LS.get("nova.model", "qwen3.8-flash:free"),
   nickname: LS.get("nova.nickname", "Nova"),
   autospeak: LS.get("nova.autospeak", false),
   studyStrict: LS.get("nova.studyStrict", true),
@@ -181,14 +181,10 @@ const MODELS = {
     { id: "openai", label: "GPT (free, no key) — GPT-OSS 20B reasoning" },
   ],
   openrouter: [
-    // Verified working with the built-in key (2026-09-26). The rerank model
-    // (llama-nemotron-rerank-vl) is a search tool, not chat — excluded.
-    // TTS models (deepgram/flux-tts, qwen-audio-tts, seed-audio) are blocked
-    // from the chat endpoint by OpenRouter — they need a separate TTS route.
+    // Live-audited 2026-10-07: nemotron-3-super + ultra verified; ling-3.0 and
+    // nemotron-3.5-lightning removed (404 / never verified).
     { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra 550B · FREE — huge ⭐" },
     { id: "nvidia/nemotron-3-super-120b-a12b:free", label: "Nemotron 3 Super 120B · FREE" },
-    { id: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning · FREE — fast ⚡" },
-    { id: "inclusionai/ling-3.0-flash-fin:free", label: "Ling 3.0 Flash · FREE" },
   ],
   // Removed the built-in "openai" provider — the shared TH key is not an OpenAI key
   // (live test: HTTP 401 on every model). Use Pollinations for keyless GPT instead.
@@ -201,11 +197,11 @@ const MODELS = {
     { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash — newest (often busy)" },
   ],
   groq: [
-    // Verified working live (2026-09-26). Groq = OpenAI-compatible, absurdly fast.
+    // Live-audited 2026-09-26 + 2026-10-07 (all three verified again).
+    // allam-2-7b removed — not re-verified in the 2026-10-07 audit.
     { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B — smartest, blazing fast ⚡" },
     { id: "openai/gpt-oss-20b", label: "GPT-OSS 20B — instant ⚡" },
     { id: "qwen/qwen3.8-27b", label: "Qwen 3.8 27B — smart" },
-    { id: "allam-2-7b", label: "ALLAM 2 7B — light" },
   ],
   ollama: [
     // Filled live from /api/ollama/models when the laptop runs Ollama.
@@ -213,13 +209,20 @@ const MODELS = {
     { id: "llama3.2", label: "llama3.2 — local (install via Ollama)" },
   ],
   tokenharbor: [
-    // Verified working live (2026-09-26). Paid TH models (gpt-5.5, claude-sonnet-5,
-    // gemini-3.6-flash via TH) were removed — the shared TH wallet is $0 → HTTP 402.
-    { id: "qwen3.8-flash:free", label: "Qwen 3.8 Flash · FREE — fast & smart ⭐" },
-    { id: "deepseek-v4.1-flash:free", label: "DeepSeek v4.1 Flash · FREE" },
+    // Live-audited 2026-10-07. qwen3.8-flash:free returns HTTP 404 on both
+    // keys (retired) — removed from the picker; relay falls back honestly.
+    { id: "deepseek-v4.1-flash:free", label: "DeepSeek v4.1 Flash · FREE — default ⭐" },
     { id: "mimo-v2.6-flash:free", label: "MiMo v2.6 Flash · FREE" },
     { id: "mimo-v2.5:free", label: "MiMo v2.5 · FREE" },
     { id: "deepseek-v4-flash:free", label: "DeepSeek v4 Flash · FREE" },
+  ],
+  cleanapis: [
+    // Live-audited 2026-10-07 — all three verified HTTP 200 with real content.
+    // Picked to fill real gaps (5M tokens/mo plan, server-secure key only):
+    // 1M context for huge documents, cheap vision, built-in web search.
+    { id: "deepseek-v4-flash-0731", label: "DeepSeek V4 Flash — 1,000,000-token context ⭐" },
+    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna — sees images (vision) · cheap" },
+    { id: "kimi-k2.6", label: "Kimi K2.6 — built-in web search" },
   ],
   bai: [
     // NOTE: B.AI needs its own key; entries hidden from the picker until a key is set.
@@ -230,33 +233,28 @@ const MODELS = {
   ],
 };
 
-/* Built-in API keys (the owner's own). Pre-provisioned so the Settings modal
-   stays clean — no key fields needed. All verified working 2026-09-26.
-   NOTE: the old AQ.… Gemini keys died (Google revokes those OAuth-style tokens;
-   real Gemini keys start with AIza). Gemini is now bring-your-own-key. */
-const BUILTIN_KEYS = {
-  tokenharbor: [
-    "thk_live_yDGvE-Z4hkMmDYyXiBjcdPX0TeLLqZ2sLBNSSFL_QHsCLt_s3ZQXebWH7U8SNEBV", // verified
-    "thk_live_vsHtKzxRrFCfiP8X9qimjhhAjgwaTvWU6EThu8sTiu5f9krij6XfQeJZQp_o9r6P", // verified
-  ],
-  groq: "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", // verified
-  openrouter: "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", // verified ($0 free-tier)
-};
-// Ollama runs locally — no key. getKey() needs no entry for provider "ollama".
-
-let TH_KEY_INDEX = 0; // rotates when a key fails (see callAI failover)
+/* Built-in provider keys now live SERVER-SIDE ONLY (Netlify environment
+   variables — see nova-keys-netlify.txt locally, delete after setup).
+   The browser never sees them: tokenharbor/groq/openrouter requests are
+   relayed through /api/chat. Migration 2026-10-07 — keys were previously
+   hardcoded here, which shipped them to every visitor. */
 function getKey() {
-  if (state.apiKey) return state.apiKey;
-  if (state.provider === "tokenharbor") {
-    const keys = BUILTIN_KEYS.tokenharbor;
-    return keys[TH_KEY_INDEX % keys.length];
-  }
-  if (state.provider === "groq") return BUILTIN_KEYS.groq;
-  if (state.provider === "openrouter") return BUILTIN_KEYS.openrouter;
-  return "";
+  return state.apiKey;   // user's own keys (Gemini/B.AI) only; server brains need none
 }
 
 /* ---------------- Element refs ---------------- */
+/* 2026-10-07 audit: models verified BROKEN (HTTP 404) are retired. If a saved
+   choice points at one, migrate to the provider's verified default — never
+   leave a user stuck on a dead model. */
+const RETIRED_MODELS = {
+  tokenharbor: ["qwen3.8-flash:free"],
+  openrouter: ["inclusionai/ling-3.0-flash-fin:free"],
+};
+if (RETIRED_MODELS[state.provider] && RETIRED_MODELS[state.provider].includes(state.model)) {
+  state.model = (MODELS[state.provider] && MODELS[state.provider][0] && MODELS[state.provider][0].id) || "auto";
+  LS.set("nova.model", state.model);
+}
+
 const el = {
   menu: $("#btn-menu"), sidebar: $("#sidebar"), scrim: $("#scrim"),
   messages: $("#messages"), input: $("#input"), send: $("#btn-send"),
@@ -274,7 +272,6 @@ const el = {
   homeContinue: null, btnHome: null, // bottom-nav Home handler wired in wire()
   attach: $("#btn-attach"), attachMenu: $("#attach-menu"), attachTray: $("#attachments"),
   fileImg: $("#file-img"), fileCam: $("#file-cam"), fileDoc: $("#file-doc"), fileFolder: $("#file-folder"),
-  wave: $("#wave"), waveBars: $("#wave-bars"), waveText: $("#wave-text"),
   status: $("#status-label"),
   listenBanner: $("#listen-banner"), wakeName: $("#wake-name"),
   listenStop: $("#btn-listen-stop"), queueInfo: $("#queue-info"),
@@ -769,10 +766,23 @@ function buildApiMessages(chat, files = []) {
 async function callAI(messages, onDelta) {
   const { provider, model } = state;
   const apiKey = getKey();
-  if (provider !== "pollinations" && provider !== "lite" && provider !== "ollama" && !apiKey) throw new Error("NO_KEY");
+  if (provider !== "pollinations" && provider !== "lite" && provider !== "ollama" &&
+      !["tokenharbor", "groq", "openrouter", "cleanapis", "auto"].includes(provider) && !apiKey) throw new Error("NO_KEY");
 
   if (provider === "pollinations") {
     return await callFreeAI(messages, onDelta, true);
+  }
+  if (provider === "tokenharbor" || provider === "groq" || provider === "openrouter" || provider === "cleanapis" || provider === "auto") {
+    // Server-relayed brains: keys live in Netlify env vars, never in the browser.
+    const j = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, model, messages, stream: false }),
+    }).then((r) => r.json()).catch(() => null);
+    if (!j || j.error) throw new Error((j && j.error) || "relay failed");
+    if (j.fallbackUsed) toast(`Answered by ${j.actualProvider || "free fallback"} — ${provider} unavailable`, "warn");
+    const txt = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "";
+    onDelta(txt);
+    return;
   }
   if (provider === "ollama") {
     // Local model served by Ollama on this laptop, proxied via serve.py so
@@ -844,22 +854,8 @@ async function callAI(messages, onDelta) {
   };
 
   let res = await doCall(apiKey);
-  // Key failover: rotate through spare built-in keys on auth/balance errors
-  const spares = BUILTIN_KEYS[provider] || [];
-  const rotatable = Array.isArray(spares) && spares.length > 1;
-  if (rotatable && !res.ok) {
-    const errText = await readErr(res);
-    if (/401|403|402|quota|credit|balance|invalid/i.test(errText)) {
-      for (const spare of spares) {
-        if (spare === apiKey) continue;
-        res = await doCall(spare);
-        if (res.ok) {
-          TH_KEY_INDEX = spares.indexOf(spare); // stick with the working key
-          break;
-        }
-      }
-    }
-  }
+  // Built-in key failover removed: server brains relay via /api/chat, where
+  // the server owns key rotation + fallback (see netlify/functions/chat.js).
   if (!res.ok) throw new Error(await readErr(res));
   return await readSSE(res, (json) => json?.choices?.[0]?.delta?.content || "", onDelta);
 }
@@ -1365,8 +1361,19 @@ async function tryCommand(text) {
 async function callAIOnce(messages) {
   const { provider, model } = state;
   const apiKey = getKey();
-  if (provider !== "pollinations" && provider !== "lite" && provider !== "ollama" && !apiKey) throw new Error("NO_KEY");
+  if (provider !== "pollinations" && provider !== "lite" && provider !== "ollama" &&
+      !["tokenharbor", "groq", "openrouter", "cleanapis", "auto"].includes(provider) && !apiKey) throw new Error("NO_KEY");
 
+  if (provider === "tokenharbor" || provider === "groq" || provider === "openrouter" || provider === "cleanapis" || provider === "auto") {
+    // Server-relayed brains: keys live in Netlify env vars, never in the browser.
+    const j = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, model, messages, stream: false }),
+    }).then((r) => r.json()).catch(() => null);
+    if (!j || j.error) throw new Error((j && j.error) || "relay failed");
+    if (j.fallbackUsed) toast(`Answered by ${j.actualProvider || "free fallback"} — ${provider} unavailable`, "warn");
+    return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "";
+  }
   if (provider === "pollinations") {
     const res = await fetch("/api/chat", {
       method: "POST",
@@ -1842,79 +1849,172 @@ const j$ = (id) => document.getElementById(id);
 let vizLevel = 0;                 // smoothed live mic amplitude 0..1
 let vizTarget = 0;
 
+/* ═════════ NOVA CORE — original identity, not a star/orb ═════════
+   A precision instrument: a segmented intelligence nucleus with a dial
+   of rotating arcs, three tilted orbital rings with traveling nodes, a
+   fine tick ring driven by REAL microphone frequencies, orbiting dust,
+   and a radar sweep while real work (THINKING/EXECUTING) is happening.
+   SPEAKING pulses come from real TTS word-boundary events (corePulse).
+   Silence calms everything down. One canvas, zero ctx.shadowBlur —
+   gradient glow only, so it stays cheap on CPU/GPU. */
+let vizState = "IDLE";
+let corePulseV = 0;
+function corePulse(strength = 0.5) { corePulseV = Math.min(1, corePulseV + strength); }
+function wireTTSPulse(u) {
+  u.onboundary = () => corePulse(0.45);   // REAL word events from the speech engine
+}
+
 function startVoiceViz() {
   const cv = jEl.viz;
   if (!cv) return;
   const ctx = cv.getContext("2d");
-  const W = cv.width, H = cv.height;
-  const CX = W / 2, CY = H / 2, R = W * 0.16;
-  const freq = new Uint8Array(128);
-  let phase = 0;
+  if (!ctx) return;
+  const freq = new Uint8Array(64);
+  const TICKS = 96, PARTS = 26;
+  const parts = Array.from({ length: PARTS }, (_, i) => ({
+    r: 0.34 + (i % 7) * 0.055, a: Math.random() * Math.PI * 2,
+    v: (0.0016 + (i % 5) * 0.0009) * (i % 2 ? 1 : -1), s: 0.9 + (i % 4) * 0.5,
+  }));
+  const node = { a1: 0, v1: 0.011, a2: Math.PI, v2: -0.007 };
+  let sweep = 0, level = 0, phase = 0;
+
+  const size = () => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const css = cv.clientWidth || 320;
+    const px = Math.floor(css * dpr);
+    if (Math.abs(cv.width - px) > 2) { cv.width = px; cv.height = px; }
+  };
 
   const draw = (now) => {
     jarvisRAF = requestAnimationFrame(draw);
-    if (waveAnalyser) {
+    size();
+    const W = cv.width, H = cv.height;
+    if (!W) return;
+    const C = W / 2, R = W * 0.5;
+    const t = now / 1000;
+    const busy = vizState === "PROCESSING" || vizState === "THINKING" || vizState === "EXECUTING";
+    const speaking = vizState === "SPEAKING";
+    const listening = vizState === "LISTENING";
+    const error = vizState === "ERROR";
+
+    // REAL mic frequencies only while the mic is actually open + listening.
+    if (waveAnalyser && listening) {
       waveAnalyser.getByteFrequencyData(freq);
       let sum = 0;
-      for (let i = 2; i < 48; i++) sum += freq[i];
-      vizTarget = Math.min(1, (sum / 46) / 120);
-    } else {
-      vizTarget = 0;
-    }
-    vizLevel += (vizTarget - vizLevel) * 0.12;   // smooth, never jittery
-    const t = now / 1000;
-    phase += 0.01 + vizLevel * 0.02;
+      for (let i = 2; i < 40; i++) sum += freq[i];
+      vizTarget = Math.min(1, (sum / 38) / 110);
+    } else vizTarget = 0;
+    level += (vizTarget - level) * 0.14;
 
     ctx.clearRect(0, 0, W, H);
+    const hue = error ? 18 : 210, sat = error ? 68 : 90;
+    phase += 0.006 + (busy ? 0.012 : 0) + level * 0.01;
 
-    // halo
-    const halo = ctx.createRadialGradient(CX, CY, R * 0.4, CX, CY, R * 2.4);
-    halo.addColorStop(0, "rgba(106,165,248,0.14)");
-    halo.addColorStop(1, "rgba(106,165,248,0)");
-    ctx.fillStyle = halo;
+    // 1) deep atmosphere (radial, state-tinted)
+    const atmo = ctx.createRadialGradient(C, C, 0, C, C, R);
+    atmo.addColorStop(0, `hsla(${hue},${sat}%,72%,${(0.14 + level * 0.14 + corePulseV * 0.12).toFixed(3)})`);
+    atmo.addColorStop(0.45, `hsla(${hue},${sat}%,60%,${(0.05 + level * 0.05).toFixed(3)})`);
+    atmo.addColorStop(1, "hsla(220,60%,50%,0)");
+    ctx.fillStyle = atmo;
     ctx.fillRect(0, 0, W, H);
 
-    // reactive ring of bars
-    const BARS = 64;
-    for (let i = 0; i < BARS; i++) {
-      const v = waveAnalyser ? freq[2 + Math.floor((i / BARS) * 60)] / 255 : 0;
-      const a = (i / BARS) * Math.PI * 2 - phase * 0.7;
-      const r1 = R * 1.45;
-      const r2 = r1 + 3 + v * 40 + vizLevel * 8;
-      ctx.strokeStyle = "rgba(106,165,248," + (0.10 + v * 0.55).toFixed(3) + ")";
-      ctx.lineWidth = 2;
+    // 2) three tilted orbital rings — thin, layered depth
+    const rings = [
+      { tilt: 0.34, rot: 0.5 + Math.sin(t * 0.11) * 0.05, rad: 0.44, alpha: 0.30 },
+      { tilt: 0.62, rot: -0.9 - Math.sin(t * 0.09) * 0.04, rad: 0.36, alpha: 0.22 },
+      { tilt: 0.22, rot: 2.1 + t * 0.02, rad: 0.50, alpha: 0.16 },
+    ];
+    ctx.lineWidth = Math.max(1, W * 0.0022);
+    for (const rg of rings) {
+      ctx.save();
+      ctx.translate(C, C);
+      ctx.rotate(rg.rot);
+      ctx.strokeStyle = `hsla(${hue},${sat}%,75%,${rg.alpha})`;
       ctx.beginPath();
-      ctx.moveTo(CX + Math.cos(a) * r1, CY + Math.sin(a) * r1);
-      ctx.lineTo(CX + Math.cos(a) * r2, CY + Math.sin(a) * r2);
+      ctx.ellipse(0, 0, R * rg.rad, R * rg.rad * rg.tilt, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    // traveling nodes on rings 1-2 — the system's real activity level
+    node.a1 += node.v1 * (busy ? 2.2 : 1) * (1 + level * 0.8);
+    node.a2 += node.v2 * (busy ? 1.8 : 1);
+    for (const [rg, ang] of [[rings[0], node.a1], [rings[1], node.a2]]) {
+      const rx = R * rg.rad, ry = rx * rg.tilt;
+      const x = C + Math.cos(ang) * rx * Math.cos(rg.rot) - Math.sin(ang) * ry * Math.sin(rg.rot);
+      const y = C + Math.cos(ang) * rx * Math.sin(rg.rot) + Math.sin(ang) * ry * Math.cos(rg.rot);
+      const gl = ctx.createRadialGradient(x, y, 0, x, y, W * 0.02);
+      gl.addColorStop(0, `hsla(${hue},${sat}%,85%,0.9)`);
+      gl.addColorStop(1, `hsla(${hue},${sat}%,70%,0)`);
+      ctx.fillStyle = gl;
+      ctx.beginPath(); ctx.arc(x, y, W * 0.02, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // 3) fine audio-reactive tick ring (REAL frequencies while listening)
+    const baseR = R * 0.26;
+    ctx.lineWidth = Math.max(1, W * 0.0028);
+    for (let i = 0; i < TICKS; i++) {
+      const v = listening ? freq[2 + Math.floor((i / TICKS) * 56)] / 255 : 0;
+      const shimmer = speaking ? (0.5 + 0.5 * Math.sin(i * 0.7 + t * 6)) * (0.2 + corePulseV) : 0;
+      const idle = 0.05 + 0.03 * Math.sin(i * 0.35 + t * 1.2);
+      const amp = listening ? Math.max(v, idle) : Math.max(idle, shimmer);
+      const a = (i / TICKS) * Math.PI * 2 + phase * 0.5;
+      const r1 = baseR + R * 0.035;
+      const r2 = r1 + R * (0.012 + amp * 0.075);
+      ctx.strokeStyle = `hsla(${hue},${sat}%,${68 + amp * 22 | 0}%,${(0.22 + amp * 0.6).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.moveTo(C + Math.cos(a) * r1, C + Math.sin(a) * r1);
+      ctx.lineTo(C + Math.cos(a) * r2, C + Math.sin(a) * r2);
       ctx.stroke();
     }
 
-    // Nova four-point star, breathing with the voice
-    const rr = R * (1 + vizLevel * 0.18 + Math.sin(t * 1.6) * 0.03);
-    const star = (cx, cy, long, short, rot) => {
+    // 4) the intelligence nucleus: glow + crisp core + segmented dial arcs
+    const nucR = R * (0.155 + level * 0.02 + corePulseV * 0.03 + Math.sin(t * 1.4) * 0.006);
+    const g = ctx.createRadialGradient(C, C, 0, C, C, nucR * 2.1);
+    g.addColorStop(0, `hsla(${hue},${sat}%,88%,0.95)`);
+    g.addColorStop(0.35, `hsla(${hue},${sat}%,70%,0.55)`);
+    g.addColorStop(1, `hsla(${hue},${sat}%,60%,0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(C, C, nucR * 2.1, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = `hsla(${hue},${sat}%,92%,0.95)`;
+    ctx.beginPath(); ctx.arc(C, C, nucR * 0.52, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = Math.max(1.2, W * 0.004);
+    for (let k = 0; k < 3; k++) {
+      const a0 = phase * (k % 2 ? -1 : 1) * (1 + k * 0.3) + k * 2.09;
+      ctx.strokeStyle = `hsla(${hue},${sat}%,80%,${0.5 - k * 0.1})`;
+      ctx.beginPath(); ctx.arc(C, C, nucR * (1.25 + k * 0.16), a0, a0 + 1.5); ctx.stroke();
+    }
+    ctx.lineWidth = Math.max(1, W * 0.002);
+    ctx.strokeStyle = `hsla(${hue},${sat}%,78%,0.35)`;
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2 + phase * 0.25;
+      const r1 = nucR * 1.75, r2 = r1 + R * 0.014;
       ctx.beginPath();
-      for (let k = 0; k < 8; k++) {
-        const ang = rot + (Math.PI / 2) * (k / 2);
-        const rad = k % 2 === 0 ? long : short;
-        const x = cx + rad * Math.cos(ang), y = cy + rad * Math.sin(ang);
-        k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      ctx.moveTo(C + Math.cos(a) * r1, C + Math.sin(a) * r1);
+      ctx.lineTo(C + Math.cos(a) * r2, C + Math.sin(a) * r2);
+      ctx.stroke();
+    }
+
+    // 5) radar sweep ONLY while real work runs (never a fake spinner)
+    if (busy) {
+      sweep += 0.02;
+      ctx.lineWidth = Math.max(1, W * 0.004);
+      for (let k = 0; k < 10; k++) {
+        const a = sweep - k * 0.05;
+        ctx.strokeStyle = `hsla(${hue},${sat}%,70%,${(0.16 * (1 - k / 10)).toFixed(3)})`;
+        ctx.beginPath(); ctx.arc(C, C, R * 0.58, a, a + 0.06); ctx.stroke();
       }
-      ctx.closePath();
-    };
-    ctx.save();
-    ctx.translate(CX, CY);
-    ctx.rotate(Math.sin(t * 0.8) * 0.12);
-    star(0, 0, rr, rr * 0.30, -Math.PI / 2);
-    ctx.fillStyle = "rgba(106,165,248,0.92)";
-    ctx.shadowColor = "rgba(106,165,248,0.55)";
-    ctx.shadowBlur = 22 + vizLevel * 26;
-    ctx.fill();
-    // small companion star
-    star(rr * 0.62, rr * 0.5, rr * 0.16, rr * 0.05, -Math.PI / 2);
-    ctx.fillStyle = "rgba(106,165,248,0.7)";
-    ctx.shadowBlur = 12;
-    ctx.fill();
-    ctx.restore();
+    }
+
+    // 6) orbiting dust (slightly squashed vertical = depth)
+    ctx.fillStyle = `hsla(${hue},${sat}%,80%,${(0.25 + level * 0.4).toFixed(3)})`;
+    for (const pt of parts) {
+      pt.a += pt.v * (busy ? 2 : 1) * (1 + level * 1.5);
+      const x = C + Math.cos(pt.a) * R * pt.r;
+      const y = C + Math.sin(pt.a) * R * pt.r * 0.86;
+      ctx.beginPath(); ctx.arc(x, y, pt.s * (W * 0.003), 0, Math.PI * 2); ctx.fill();
+    }
+
+    corePulseV *= 0.94; if (corePulseV < 0.01) corePulseV = 0;
   };
   jarvisRAF = requestAnimationFrame(draw);
 }
@@ -1956,11 +2056,20 @@ const VOICE_LABELS = {
 };
 function voicePhase(p) {
   VoiceFSM.phase = p;
+  vizState = p;                              // NOVA Core reads this every frame
   setVoicePhase(VOICE_LABELS[p] || p);
   setHudState(p === "LISTENING" ? "listening"
     : p === "SPEAKING" ? "speaking"
     : (p === "PROCESSING" || p === "THINKING" || p === "EXECUTING") ? "processing"
     : "idle");
+  // ONE visual state system: background reacts to the same real state.
+  if (window.NovaFX) {
+    if (p === "LISTENING") NovaFX.state("listening");
+    else if (p === "PROCESSING" || p === "THINKING" || p === "EXECUTING") NovaFX.state("processing");
+    else if (p === "SPEAKING") NovaFX.state("speaking");
+    else if (p === "ERROR") NovaFX.state("error");
+    else NovaFX.state("idle");
+  }
 }
 function vSession() { return VoiceFSM.session; }
 function vStale(s) { return s !== VoiceFSM.session; }
@@ -2041,6 +2150,7 @@ async function openJarvis() {
   jEl.exit = jEl.exit || j$("jarvis-exit");
 
   jarvisOverlayOpen = true;
+  document.body.classList.add("voice-open");   // chat recedes, background deepens
   vNextSession();                    // fresh session; any old callbacks die
   jEl.overlay.classList.remove("hidden");
   requestAnimationFrame(() => jEl.overlay.classList.add("open"));
@@ -2076,6 +2186,7 @@ async function openJarvis() {
 
 function closeJarvis() {
   jarvisOverlayOpen = false;
+  document.body.classList.remove("voice-open");
   jEl.overlay.classList.remove("open");
   setTimeout(() => jEl.overlay.classList.add("hidden"), 320);
   cancelAnimationFrame(jarvisRAF);
@@ -2099,18 +2210,8 @@ function startVoiceChatInJarvis() {
     return;
   }
   if (!voiceChat) { voiceChat = true; el.mic.classList.add("listening"); listenOnce(); }
-  // Mirror every real phase into the voice layer (human words, real states).
-  const origSetWave = setWaveText;
-  setWaveText = function (t) {
-    origSetWave(t);
-    if (!jarvisOverlayOpen) return;
-    if (/listening/i.test(t)) setVoicePhase("Listening…");
-    else if (/thinking/i.test(t)) setVoicePhase("Working…");
-    else if (t && t.startsWith("\u201c")) {
-      setVoicePhase("Heard you");
-      setHeard(t.replace(/[\u201c\u201d]/g, ""));
-    }
-  };
+  // Phases mirror into the voice layer through the setWaveText router —
+  // no function monkey-patching, no second interface, one controller.
 }
 
 /* Mic level → vortex listening pulse (when the analyser is live). */
@@ -2391,6 +2492,7 @@ function speak(text) {
     setHudState("speaking");
     setVoiceState("speaking", clean.slice(0, 120));
   };
+  wireTTSPulse(u);                           // real word boundaries → core pulses
   u.onend = () => {
     if (!VoiceFSM.ttsActive) return;         // cancel() also fires onend — ignore ghosts
     state.speaking = false;
@@ -2409,6 +2511,7 @@ function speakNow(text) {
   const u = new SpeechSynthesisUtterance(cleanForSpeech(text));
   if (jarvisVoice) u.voice = jarvisVoice;
   u.rate = 1.0; u.pitch = 0.82;
+  wireTTSPulse(u);
   u.onstart = () => { state.speaking = true; voicePhase("SPEAKING"); setHudState("speaking"); };
   u.onend = () => {
     if (!VoiceFSM.ttsActive) return;         // ghost onend from cancel()
@@ -2439,8 +2542,7 @@ function resumeRecognitionAfterTTS() {
 /* ═══════ PERSISTENT MICROPHONE ═══════
    getUserMedia runs ONCE; every listener reuses the same stream. Tracks are
    only disabled (enabled=false) when idle — no permission pop-ups, ever. */
-let waveCtx = null, waveAnalyser = null, waveStream = null, waveRAF = 0;
-const BAR_COUNT = 28;
+let waveCtx = null, waveAnalyser = null, waveStream = null;   // mic stream + analyser (shared with the NOVA Core viz)
 let micOpening = null;   // single in-flight getUserMedia promise
 let micDenied = false;   // a hard "no" this session — don't nag again
 
@@ -2487,69 +2589,18 @@ function micGate(open) {
   for (const t of waveStream.getAudioTracks()) t.enabled = open;
 }
 
-function buildWaveBars() {
-  el.waveBars.innerHTML = "";
-  for (let i = 0; i < BAR_COUNT; i++) {
-    const b = document.createElement("i");
-    b.style.setProperty("--d", `${(i % 7) * 60}ms`);
-    el.waveBars.appendChild(b);
-  }
+/* Legacy #wave bar system REMOVED — it rendered a second voice interface
+   underneath the #jarvis overlay (root cause of the double-UI bug).
+   All voice status now flows through ONE interface: #jarvis. */
+function setWaveText(t) {
+  // Single-interface router: quoted text → live transcript, labels → state.
+  if (t && t.startsWith("\u201c")) setHeard(t.replace(/[\u201c\u201d]/g, ""));
+  else setVoicePhase(t || "");
 }
 
-async function startWave() {
-  try {
-    await ensureMic();
-    micGate(true);
-    const data = new Uint8Array(waveAnalyser.frequencyBinCount);
-    const bars = el.waveBars.children;
-    const loop = () => {
-      if (!waveAnalyser) return;
-      waveAnalyser.getByteFrequencyData(data);
-      for (let i = 0; i < BAR_COUNT; i++) {
-        const idx = 1 + Math.floor((i / BAR_COUNT) * (data.length - 2));
-        const v = data[idx] / 255;
-        const boosted = Math.pow(v, 0.75);
-        const h = 18 + boosted * 78;
-        bars[i].style.height = h.toFixed(1) + "%";
-        bars[i].style.opacity = (0.55 + boosted * 0.45).toFixed(2);
-      }
-      waveRAF = requestAnimationFrame(loop);
-    };
-    loop();
-  } catch { /* no mic permission — bars just idle-animate */ }
-}
-
-function stopWave() {
-  cancelAnimationFrame(waveRAF);
-  waveRAF = 0;
-  micGate(false);                    // keep the stream, just mute it
-  el.wave.classList.add("closing");
-  setTimeout(() => { el.wave.classList.add("hidden"); el.wave.classList.remove("closing"); }, 220);
-}
-
-/* ---- Full voice conversation: talk → auto-send → spoken reply → listen again ---- */
 let voiceChat = false;      // loop master switch
 let voiceThinking = false;  // a reply is being fetched/spoken
 let dictation = false;      // plain type-into-box mode
-
-function setWaveText(t) { el.waveText.textContent = t; }
-
-function startVoiceUI(phase) {
-  buildWaveBars();
-  el.wave.classList.remove("hidden");
-  el.input.style.visibility = "hidden";
-  el.send.style.visibility = "hidden";
-  requestAnimationFrame(() => el.wave.classList.add("open"));
-  setWaveText(phase);
-  startWave();
-}
-
-function stopVoiceUI() {
-  stopWave();
-  el.input.style.visibility = "";
-  el.send.style.visibility = "";
-  el.mic.classList.remove("listening");
-}
 
 async function startMicDictation() {
   if (!SR && !NATIVE_BRIDGE) { toast("Voice input not supported in this browser", "warn"); return; }
@@ -2578,7 +2629,6 @@ async function listenOnce() {
     let finalText = "";
     const alive = () => !vStale(my) && recog === r && voiceChat;   // session-owner check
 
-    startVoiceUI(VOICE_LABELS.LISTENING);
     micGate(true);
     voicePhase("LISTENING");
 
@@ -2667,12 +2717,10 @@ function endVoiceChat(msg) {
   voiceChat = false;
   voiceThinking = false;
   vNextSession();            // orphan any pending voice callbacks
-  stopVoiceUI();
+  el.mic.classList.remove("listening");
   stopListening();
   if (msg) toast(msg);
 }
-
-el.waveText.onclick = () => endVoiceChat("Voice chat ended ✓");
 
 /* Hands-free: continuous listening for "<Nickname>, <command>".
    One session owns the recognizer. While Nova speaks the recognizer is
@@ -3147,6 +3195,12 @@ function saveSettings() {
 /* Composer model menu (custom, opens upward, dark glass). */
 const BRAIN_GROUPS = () => [
   {
+    label: "Nova Auto — server-routed, always available",
+    items: [
+      { id: "auto", label: "✦ Nova Auto — picks the best working brain", provider: "auto", model: "auto" },
+    ],
+  },
+  {
     label: "Online · free",
     items: [
       { id: "free", label: "🆓 Free AI — GPT-OSS 20B, no key", provider: "pollinations", model: "openai" },
@@ -3174,6 +3228,10 @@ const BRAIN_GROUPS = () => [
     label: "Gemini — your key",
     items: (MODELS.gemini || []).map((m) => ({ id: "g:" + m.id, label: "✦ " + m.label, provider: "gemini", model: m.id })),
   }] : []),
+  {
+    label: "CleanApis — 5M tokens/mo · server-secure",
+    items: (MODELS.cleanapis || []).map((m) => ({ id: "cl:" + m.id, label: "◆ " + m.label, provider: "cleanapis", model: m.id })),
+  },
   // (all picker groups are freely clickable — every built-in-key provider works instantly)
   {
     label: "OpenRouter — free · built-in key ◈",
@@ -3186,11 +3244,13 @@ const BRAIN_GROUPS = () => [
 ];
 
 function currentBrainId() {
+  if (state.provider === "auto") return "auto";
   if (state.provider === "pollinations") return "free";
   if (state.provider === "lite") return "lite";
   if (state.provider === "tokenharbor") return "th:" + state.model;
   if (state.provider === "openrouter") return "or:" + state.model;
   if (state.provider === "groq") return "gr:" + state.model;
+  if (state.provider === "cleanapis") return "cl:" + state.model;
   if (state.provider === "ollama") return "ol:" + state.model;
   if (state.provider === "bai") return "b:" + state.model;
   return "g:" + state.model;
@@ -3212,13 +3272,15 @@ async function discoverOllama() {
 
 function escHtml(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 const PROV_META = {
+  auto: { name: "Nova Auto", tag: "AUTO", cls: "dd-p-free" },
   free: { name: "Free AI", tag: "NO KEY", cls: "dd-p-free" },
   lite: { name: "Nova Lite", tag: "OFFLINE", cls: "dd-p-lite" },
   gemini: { name: "Gemini", tag: "YOUR KEY", cls: "dd-p-gemini" },
-  tokenharbor: { name: "Token Harbor", tag: "FREE", cls: "dd-p-th" },
+  tokenharbor: { name: "Token Harbor", tag: "SERVER-SECURE", cls: "dd-p-th" },
   bai: { name: "B.AI", tag: "KEY", cls: "dd-p-bai" },
-  openrouter: { name: "OpenRouter", tag: "FREE · BUILT-IN", cls: "dd-p-or" },
-  groq: { name: "Groq", tag: "BUILT-IN", cls: "dd-p-groq" },
+  openrouter: { name: "OpenRouter", tag: "SERVER-SECURE", cls: "dd-p-or" },
+  groq: { name: "Groq", tag: "SERVER-SECURE", cls: "dd-p-groq" },
+  cleanapis: { name: "CleanApis", tag: "SERVER-SECURE · 5M", cls: "dd-p-oa" },
   ollama: { name: "Ollama", tag: "LOCAL · PRIVATE", cls: "dd-p-ollama" },
   openai: { name: "OpenAI", tag: "KEY", cls: "dd-p-oa" },
 };
@@ -3251,9 +3313,26 @@ function updateModelSelect() {
   renderModelMenu();
 }
 
+/* Real provider health from our own server (/api/health) — never fake status. */
+let HEALTH = null, HEALTH_AT = 0;
+function healthDot(provider) {
+  const h = HEALTH && Array.isArray(HEALTH.providers) && HEALTH.providers.find((p) => p.provider === provider);
+  return h ? `<span class="dd-status ${h.status}" title="${h.status}${h.latencyMs ? " · " + h.latencyMs + "ms" : ""}"></span>` : "";
+}
+async function refreshHealth() {
+  if (HEALTH && Date.now() - HEALTH_AT < 120000) return;
+  try {
+    const r = await fetch("/api/health");
+    HEALTH = await r.json();
+    HEALTH_AT = Date.now();
+    if (el.modelDD && !el.modelDD.classList.contains("hidden")) renderModelMenu();
+  } catch { /* offline — dots stay neutral */ }
+}
+
 function renderModelMenu(filter = "") {
   const q = filter.trim().toLowerCase();
   el.modelDDMenu.innerHTML = "";
+  refreshHealth();
   const search = document.createElement("div");
   search.className = "dd-search";
   search.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="dd-search-input" type="text" placeholder="Search models…" autocomplete="off" />`;
@@ -3281,6 +3360,7 @@ function renderModelMenu(filter = "") {
         `<span class="dd-names"><span class="mi-label">${escHtml(item.label)}</span>` +
         (meta.name ? `<span class="dd-sub">${escHtml(meta.name)}</span>` : "") +
         `</span>` +
+        healthDot(item.provider) +
         (item.id === currentBrainId() ? '<span class="mi-check">✓</span>' : item.locked ? '<span class="mi-lock">🔑</span>' : "");
       row.onclick = () => {
         closeModelMenu();
@@ -3457,6 +3537,23 @@ function wire() {
     if (!jarvisOverlayOpen) return;
     if (VoiceFSM.ttsActive || state.speaking) userBargeIn();
   });
+  // Voice-mode bottom controls: every button is a REAL action.
+  const jMic = j$("jarvis-mic"), jType = j$("jarvis-type");
+  let micMuted = false;
+  if (jMic) jMic.onclick = () => {
+    micMuted = !micMuted;
+    jMic.classList.toggle("is-muted", micMuted);
+    jMic.classList.toggle("is-on", !micMuted);
+    if (micMuted) {
+      micGate(false); stopRecog();
+      setVoicePhase("Mic muted"); setHeard("Tap Mic again to keep talking.");
+    } else {
+      micGate(true);
+      setVoicePhase("Listening…"); setHeard("");
+      if (voiceChat && !voiceThinking && !VoiceFSM.ttsActive) listenOnce();
+    }
+  };
+  if (jType) jType.onclick = () => { closeJarvis(); setTimeout(() => el.input && el.input.focus(), 380); };
 
   /* Command palette + global keyboard shortcuts */
   document.addEventListener("keydown", (e) => {

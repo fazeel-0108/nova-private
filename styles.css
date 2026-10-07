@@ -519,17 +519,7 @@ button, input, textarea, select { font-family: inherit; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--accent-soft); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 .status-chip { display: inline-flex; align-items: center; gap: 7px; font-size: var(--fs-sm); color: var(--text-3); }
 .status-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.3s infinite; }
-#wave { display: flex; align-items: center; gap: var(--sp-3); height: 40px; padding: 0 var(--sp-2); }
-#wave.hidden { display: none; }
-.wave-bars { flex: 1; height: 100%; display: flex; align-items: center; justify-content: center; gap: 3px; }
-.wave-bars i {
-  width: 4px; height: 30%; border-radius: 2px; background: var(--accent);
-  animation: wave-idle 1.2s ease-in-out var(--d, 0ms) infinite;
-  transition: height 0.09s linear, opacity 0.09s linear;
-}
-@keyframes wave-idle { 0%, 100% { transform: scaleY(0.35); opacity: 0.55; } 50% { transform: scaleY(1.5); opacity: 1; } }
-.wave-text { font-size: 13px; color: var(--text-2); white-space: nowrap; background: transparent; border: none; cursor: pointer; padding: 6px 10px; border-radius: var(--r-sm); font-family: inherit; }
-.wave-text:hover { color: var(--text-1); background: var(--surface-2); }
+/* (legacy #wave voice bar removed — ONE voice interface: #jarvis) */
 
 /* ═════════════ Messages — editorial, not bubbles ═════════════ */
 .messages {
@@ -868,6 +858,49 @@ button, input, textarea, select { font-family: inherit; }
 }
 #jarvis .jarvis-exit:hover { color: var(--text-1); background: var(--surface-2); }
 #jarvis .jarvis-hint { margin-top: var(--sp-5); font-size: var(--fs-sm); color: var(--text-3); }
+
+/* Cinematic staging: backdrop → core → text, each layer arrives in order. */
+#jarvis .jarvis-panel { transform: scale(0.94) translateY(10px); opacity: 0; transition: transform 420ms var(--ease), opacity 320ms ease; }
+#jarvis.open .jarvis-panel { transform: none; opacity: 1; transition-delay: 70ms; }
+#jarvis .jarvis-word, #jarvis .jarvis-state, #jarvis .jarvis-heard,
+#jarvis .jarvis-hint, #jarvis .jarvis-controls { opacity: 0; transform: translateY(6px); transition: opacity 260ms ease, transform 260ms var(--ease); }
+#jarvis.open .jarvis-word { opacity: 1; transform: none; transition-delay: 150ms; }
+#jarvis.open .jarvis-state { opacity: 1; transform: none; transition-delay: 210ms; }
+#jarvis.open .jarvis-heard { opacity: 1; transform: none; transition-delay: 260ms; }
+#jarvis.open .jarvis-hint { opacity: 1; transform: none; transition-delay: 300ms; }
+#jarvis.open .jarvis-controls { opacity: 1; transform: none; transition-delay: 340ms; }
+
+/* Chat recedes while voice mode owns the screen (one composited transform). */
+.shell { transition: transform 380ms var(--ease), opacity 380ms ease, filter 380ms ease; }
+body.voice-open .shell { transform: scale(0.985); opacity: 0.35; filter: saturate(0.8); }
+
+/* Bottom voice controls: minimal, real actions only. */
+.jarvis-controls { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); margin-top: var(--sp-6); padding-bottom: env(safe-area-inset-bottom); }
+.jarvis-ctl {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 18px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border-strong); background: var(--glass);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  color: var(--text-2); font-size: 13px; font-weight: 500; font-family: inherit;
+  transition: color var(--t-fast) ease, border-color var(--t-fast) ease, background var(--t-fast) ease, transform var(--t-fast) ease;
+}
+.jarvis-ctl:hover { color: var(--text-1); border-color: var(--accent-border); }
+.jarvis-ctl:active { transform: scale(0.96); }
+.jarvis-ctl.is-on { color: var(--accent); border-color: var(--accent-border); background: var(--accent-soft); }
+.jarvis-ctl.is-muted { color: var(--danger); border-color: rgba(240, 113, 120, 0.4); }
+
+/* Real provider status dot in the brain picker (never a fake ● Online). */
+.dd-status { width: 6px; height: 6px; border-radius: 50%; flex: none; margin-left: auto; background: var(--text-3); opacity: 0.5; }
+.dd-status.working { background: var(--ok); opacity: 1; }
+.dd-status.limited { background: #f5c451; opacity: 1; }
+.dd-status.broken { background: var(--danger); opacity: 1; }
+.dd-status.unconfigured { background: var(--text-3); opacity: 0.5; }
+
+@media (max-width: 640px) {
+  #jarvis .jarvis-viz { width: min(78vmin, 340px); }
+  #jarvis .jarvis-heard { max-width: 92vw; font-size: 15px; }
+  .jarvis-ctl { padding: 11px 22px; }   /* larger touch targets */
+}
 
 /* ═════════════ Reduced motion — genuinely respected ═════════════ */
 @media (prefers-reduced-motion: reduce) {

@@ -125,11 +125,8 @@ public class WakeService extends Service {
         android.content.Intent i = new Intent(this, MainActivity.class);
         i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
                 | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        if (Build.VERSION.SDK_INT >= 27) {
-            i.addFlags(android.content.Intent.FLAG_ACTIVITY_TURN_SCREEN_ON
-                    | android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            setTurnScreenOn();
-        }
+        // Screen-on comes from the manifest's android:turnScreenOn="true" —
+        // Intent.FLAG_ACTIVITY_TURN_SCREEN_ON does not exist in the SDK.
         startActivity(i);
         android.media.ToneGenerator tg = new android.media.ToneGenerator(
                 android.media.AudioManager.STREAM_NOTIFICATION, 80);
@@ -138,8 +135,7 @@ public class WakeService extends Service {
 
     private void setTurnScreenOn() {
         // android:turnScreenOn in the manifest handles this on API 27+;
-        // nothing extra needed here.
-    }
+        // nothing extra needed here. Kept as a no-op placeholder.
 
     @Override
     public void onDestroy() {

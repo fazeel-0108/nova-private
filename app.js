@@ -332,10 +332,16 @@ function cycleTheme() {
 }
 mediaDark.addEventListener("change", () => { if (state.theme === "system") applyTheme(); });
 
-/* Custom geometric Nova mark: a four-point star drawn as a path — not a
-   Unicode glyph, so it renders identically on every platform. Injected into
-   every .nova-mark placeholder. */
-const NOVA_MARK_SVG = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M12 1.6c.9 4.9 2.9 7.3 7.6 8.4.6.15.6 1.85 0 2-4.7 1.1-6.7 3.5-7.6 8.4-.15.6-1.85.6-2 0-.9-4.9-2.9-7.3-7.6-8.4-.6-.15-.6-1.85 0-2 4.7-1.1 6.7-3.5 7.6-8.4.15-.6 1.85-.6 2 0z"/><path fill="currentColor" opacity="0.75" d="M18.9 15.4c.4 2.1 1.3 3.1 3.3 3.6.3.08.3.9 0 .98-2 .5-2.9 1.5-3.3 3.6-.08.3-.9.3-.98 0-.4-2.1-1.3-3.1-3.3-3.6-.3-.08-.3-.9 0-.98 2-.5 2.9-1.5 3.3-3.6.08-.3.9-.3.98 0z"/></svg>';
+/* Nova mark: the glass N-orb — dark glass circle, iridescent teal/violet
+   rim, bold geometric N. Matches the app icon (make_icons.py). Injected
+   into every .nova-mark placeholder. */
+const NOVA_MARK_SVG = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">'
+  + '<circle cx="12" cy="12" r="10.4" fill="#0A0C14"/>'
+  + '<path d="M7.8 21.1 A10 10 0 0 1 16.2 2.9" stroke="#6EE7E0" stroke-width="1.7" stroke-linecap="round"/>'
+  + '<path d="M16.2 2.9 A10 10 0 0 1 7.8 21.1" stroke="#966EFA" stroke-width="1.7" stroke-linecap="round"/>'
+  + '<path d="M4.6 8.2 A8.6 8.6 0 0 1 8.6 4.7" stroke="#EAF6FF" stroke-width="1.1" stroke-linecap="round" opacity="0.75"/>'
+  + '<path d="M8.3 16.6 V7.4 L15.7 16.6 V7.4" stroke="#F6FAFF" stroke-width="2.1" fill="none"/>'
+  + '</svg>';
 function injectNovaMarks() {
   document.querySelectorAll(".nova-mark").forEach((n) => { if (!n.dataset.mk) { n.dataset.mk = "1"; n.innerHTML = NOVA_MARK_SVG; } });
 }

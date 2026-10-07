@@ -2757,7 +2757,8 @@ function startHandsFreeRecog(nick) {
     for (let i = e.resultIndex; i < e.results.length; i++) {
       if (!e.results[i].isFinal) continue;
       const heard = norm(e.results[i][0].transcript);
-      const rx = new RegExp(`(?:^|\\b)(?:hey\\s+)?${nick}\\b[,!\\s]*(.*)`);
+      // Wake triggers: "Nova", "Hi Nova", "Hey Nova", "Ok Nova", "Yo Nova".
+      const rx = new RegExp(`(?:^|\\b)(?:(?:hey|hi|ok|okay|yo)\\s+)?${nick}\\b[,!\\s]*(.*)`);
       const m = heard.match(rx);
       if (!m) continue;
       const cmd = m[1].trim();

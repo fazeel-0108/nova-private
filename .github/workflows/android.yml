@@ -18,30 +18,32 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # NOTE: no setup-android step — the ubuntu-latest runner ships with the
+      # full Android SDK preinstalled (ANDROID_HOME set, licenses accepted).
+      # The old setup-android + sdkmanager-licenses step failed before Gradle
+      # could start and was the only fragile part left.
 
-      - name: Accept SDK licenses
-        run: yes | sdkmanager --licenses > /dev/null 2>&1 || true
-
-      # Hermetic build: the repo carries the official Gradle wrapper pinned to
-      # 8.6 — no dependence on whatever the runner has preinstalled.
       - name: Build debug APK
         working-directory: android
+        shell: bash
         run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "java: $(java -version 2>&1 | head -1)"
+          ls -la gradlew gradle/wrapper/
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build-log.txt
+          ./gradlew --version 2>&1 | tee build-log.txt
+          S1=${PIPESTATUS[0]}
+          if [ "$S1" -ne 0 ]; then exit "$S1"; fi
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee -a build-log.txt
           exit ${PIPESTATUS[0]}
 
-      # If the build fails, the exact error is printed on the run's Summary
-      # page (top box) — no hunting through collapsed log steps.
+      # On failure the exact reason is printed on the run's Summary page.
       - name: Print failure reason
         if: failure()
         run: |
           echo "### Build failed — last 80 log lines" >> $GITHUB_STEP_SUMMARY
-          echo '\`\`\`' >> $GITHUB_STEP_SUMMARY
-          tail -n 80 android/build-log.txt >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "no build log — failure happened before Gradle started" >> $GITHUB_STEP_SUMMARY
-          echo '\`\`\`' >> $GITHUB_STEP_SUMMARY
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_STEP_SUMMARY
+          tail -n 80 android/build-log.txt >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "no build log — see the failing step's own log" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload build log
         if: always()
@@ -52,6 +54,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: nova-apk

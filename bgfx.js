@@ -47,6 +47,8 @@
       for(int i = 0; i < 4; i++){ v += a * noise(p); p *= 2.03; a *= 0.5; }
       return v;
     }
+    /* star position inside a grid cell (used by starfield + constellation links) */
+    vec2 sPos(vec2 c){ return c + vec2(hash(c), hash(c + 3.17)); }
 
     void main(){
       vec2 uv = gl_FragCoord.xy / u_res;          // y up
@@ -68,13 +70,33 @@
       vec2 cell = floor(sp);
       float star = hash(cell);
       float tw = 0.55 + 0.45 * sin(u_time * (1.0 + star * 3.0) + star * 40.0);
-      float sdf = length(fract(sp) - 0.5);
+      float sdf = length(sp - sPos(cell));
       float starM = smoothstep(0.16, 0.0, sdf) * step(0.955, star) * tw;
       starM *= smoothstep(0.10, 0.26, r) + smoothstep(0.34, 0.62, p.y); // fade near vortex
       vec3 col = vec3(0.85, 0.92, 1.0) * starM * 0.85;
       // a few warm pink stars
       float pink = step(0.985, hash(cell + 7.3));
       col += vec3(1.0, 0.55, 0.75) * starM * pink * 0.8;
+
+      /* ---------- neural constellation: faint violet links between stars ---------- */
+      vec3 links = vec3(0.0);
+      for(int k = 0; k < 2; k++){
+        vec2 off  = (k == 0) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+        vec2 cA = cell;
+        vec2 cB = cell + off;
+        float sA = step(0.955, hash(cA));
+        float sB = step(0.955, hash(cB));
+        vec2 pA = sPos(cA);
+        vec2 pB = sPos(cB);
+        vec2 pa = sp - pA;
+        vec2 ba = pB - pA;
+        float hh = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-5), 0.0, 1.0);
+        float seg = length(pa - ba * hh);
+        float sh = 0.55 + 0.45 * sin(u_time * 0.6 + hash(cA) * 31.0);
+        links += vec3(0.60, 0.48, 1.0) * smoothstep(0.06, 0.0, seg) * sA * sB * sh;
+      }
+      links *= (smoothstep(0.10, 0.26, r) + smoothstep(0.34, 0.62, p.y)) * (0.30 + u_level * 0.55);
+      col += links;
 
       /* ---------- accretion disk: silky swirling filaments ---------- */
       float spin = u_time * 0.22 * u_spin;
@@ -108,6 +130,8 @@
       float arch2 = exp(-abs(hr - R0 * 1.60) * 34.0);
       arch2 *= smoothstep(c.y + 0.02, c.y - 0.06, p.y);
       col += (vec3(0.35, 0.85, 1.0) * arch * 0.55 + vec3(0.85, 0.98, 1.0) * arch2 * 0.65) * u_glow;
+      // violet aura accent wrapped into the halo
+      col += vec3(0.50, 0.34, 0.98) * arch * 0.10 * u_glow;
       // faint mirrored arc under the shadow (lensed bottom)
       float under = exp(-abs(hr - R0 * 1.52) * 20.0) * smoothstep(c.y - 0.01, c.y + 0.05, p.y);
       col += vec3(0.20, 0.55, 0.95) * under * 0.28 * u_glow;
@@ -117,6 +141,8 @@
       float ringGlow = exp(-abs(r - R0) * 14.0) * 0.35;
       vec3 ringCol = mix(vec3(0.55, 0.95, 1.0), vec3(1.0, 0.72, 0.35), u_warm);
       col += ringCol * (ring * 1.6 + ringGlow) * dop * u_glow;
+      // wide soft violet bloom breathing around the photon ring
+      col += vec3(0.44, 0.30, 0.95) * exp(-abs(r - R0) * 5.5) * 0.09 * u_glow;
 
       /* ---------- event horizon: pitch black, soft lensed edge ---------- */
       float hole = smoothstep(R0 * 1.005, R0 * 0.94, r);
@@ -141,6 +167,13 @@
 
       /* ---------- listening: gentle breathing brightness ---------- */
       col *= 1.0 + u_level * 0.35 * smoothstep(R0 * 0.8, R1, r);
+
+      /* ---------- radiation tendrils: slow violet wisps drifting outward ---------- */
+      vec2 cdir = vec2(cos(ang), sin(ang));
+      float tend = fbm(cdir * 1.7 + vec2(u_time * 0.030, -u_time * 0.021) + r * 2.6);
+      tend = pow(tend, 3.0);
+      tend *= smoothstep(R0 * 1.15, R1 * 0.85, r) * smoothstep(0.95, 0.25, p.y);
+      col += vec3(0.36, 0.30, 0.88) * tend * 0.38 * u_glow;
 
       /* ---------- atmosphere + floor fade ---------- */
       float lift = exp(-r * 2.0) * 0.16;

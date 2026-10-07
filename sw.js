@@ -1,6 +1,6 @@
 /* Nova service worker — offline app shell + graceful network handling.
    API calls are never cached; the app queues them while offline. */
-const CACHE = "nova-v26";
+const CACHE = "nova-v27";
 const SHELL = [
   "./",
   "./index.html",

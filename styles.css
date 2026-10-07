@@ -25,6 +25,15 @@
   --danger-soft: rgba(240, 113, 120, 0.10);
   --ok: #4ade80;
 
+  /* Glass + plasma aura (panels, composer, mic listening state) */
+  --glass: rgba(13, 16, 24, 0.60);
+  --glass-strong: rgba(10, 13, 20, 0.74);
+  --glass-border: rgba(255, 255, 255, 0.07);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.37);
+  --aura-1: #a855f7;
+  --aura-2: #3b82f6;
+  --aura-3: #ec4899;
+
   /* Typography scale */
   --font: "Inter", -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   --fs-xs: 11px;
@@ -79,6 +88,10 @@
   --accent-border: rgba(61, 125, 216, 0.40);
   --danger: #d5494f;
   --danger-soft: rgba(213, 73, 79, 0.08);
+  --glass: rgba(255, 255, 255, 0.66);
+  --glass-strong: rgba(255, 255, 255, 0.80);
+  --glass-border: rgba(20, 24, 32, 0.08);
+  --glass-shadow: 0 8px 32px rgba(20, 24, 32, 0.12);
   --shadow-1: 0 1px 2px rgba(20,24,32,0.06), 0 4px 16px rgba(20,24,32,0.05);
   --shadow-2: 0 2px 6px rgba(20,24,32,0.08), 0 12px 40px rgba(20,24,32,0.10);
   color-scheme: light;
@@ -219,8 +232,10 @@ button, input, textarea, select { font-family: inherit; }
 .sidebar {
   width: var(--sidebar-w); flex-shrink: 0;
   display: flex; flex-direction: column; gap: var(--sp-1);
-  background: var(--bg-sidebar);
-  border-right: 1px solid var(--border);
+  background: var(--glass);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border-right: 1px solid var(--glass-border);
   padding: var(--sp-3); overflow: hidden;
 }
 .side-head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-1) var(--sp-2); }
@@ -346,12 +361,14 @@ button, input, textarea, select { font-family: inherit; }
 /* ═════════════ Composer ═════════════ */
 .composer { padding: 0 var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom)); }
 .composer-inner {
-  border: 1px solid var(--border); border-radius: var(--r-xl);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-1);
+  border: 1px solid var(--glass-border); border-radius: var(--r-xl);
+  background: var(--glass);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  box-shadow: var(--glass-shadow);
   transition: border-color var(--t-med) ease, box-shadow var(--t-med) ease;
 }
-.composer-inner:focus-within { border-color: var(--border-strong); box-shadow: var(--shadow-2); }
+.composer-inner:focus-within { border-color: var(--accent-border); box-shadow: var(--shadow-2), 0 0 24px var(--accent-soft); }
 .composer-row { display: flex; align-items: flex-end; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4); }
 #input {
   flex: 1; resize: none; max-height: 160px; padding: 9px 0;
@@ -371,7 +388,29 @@ button, input, textarea, select { font-family: inherit; }
 .tool-btn:hover { background: var(--surface-2); color: var(--text-1); }
 .tool-btn:active { transform: scale(0.94); }
 .tool-btn svg { display: block; }
-.mic.listening { color: var(--danger); background: var(--danger-soft); }
+.mic { position: relative; }
+.mic.listening {
+  color: #fff; transform: scale(1.12);
+  background: linear-gradient(135deg, var(--aura-1), var(--aura-2));
+  box-shadow: 0 0 16px rgba(168, 85, 247, 0.55), 0 0 34px rgba(59, 130, 246, 0.30);
+}
+.mic.listening::before {
+  content: ""; position: absolute; inset: -3px; border-radius: 50%; pointer-events: none;
+  border: 2px solid rgba(168, 85, 247, 0.55);
+  animation: pulseRing 1.8s var(--ease) infinite;
+}
+.mic.listening::after {
+  content: ""; position: absolute; inset: -3px; border-radius: 50%; pointer-events: none;
+  background: conic-gradient(from 0deg, var(--aura-1), var(--aura-2), var(--aura-3), var(--aura-1));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+  animation: auraSpin 3.2s linear infinite;
+}
+@keyframes pulseRing {
+  0% { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+@keyframes auraSpin { to { transform: rotate(360deg); } }
 .send-btn {
   width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer;
   background: var(--accent); color: var(--accent-text);
@@ -550,14 +589,17 @@ button, input, textarea, select { font-family: inherit; }
 .modal {
   position: fixed; inset: 0; z-index: var(--z-modal);
   display: flex; align-items: center; justify-content: center;
-  background: rgba(0,0,0,0.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.55); backdrop-filter: blur(10px) saturate(140%); -webkit-backdrop-filter: blur(10px) saturate(140%);
 }
 .modal.hidden { display: none; }
 .modal-card {
   width: min(520px, calc(100vw - 24px)); max-height: min(86dvh, 720px);
   display: flex; flex-direction: column;
-  background: var(--surface-1); border: 1px solid var(--border-strong);
-  border-radius: var(--r-lg); box-shadow: var(--shadow-2);
+  background: var(--glass-strong);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-lg); box-shadow: var(--glass-shadow), 0 24px 64px rgba(0,0,0,0.45);
   animation: modal-in var(--t-slow) var(--ease);
 }
 @keyframes modal-in { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }

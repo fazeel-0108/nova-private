@@ -33,6 +33,7 @@ const state = {
   notes: LS.get("nova.notes", []),
   cards: LS.get("nova.cards", {}),   // { topic: [{q, a}] }
   tasks: LS.get("nova.tasks", []),   // cross-device drafts/actions
+  activity: LS.get("nova.activity", []),   // agent action history (what/when/device/status)
   queued: LS.get("nova.queued", []),
   profile: LS.get("nova.profile", { name: "", facts: [], asked: false }), // things Nova knows about you
   syncCode: LS.get("nova.syncCode", ""),   // pairs laptop ↔ phone
@@ -51,6 +52,7 @@ function saveAll() {
   LS.set("nova.profile", state.profile);
   LS.set("nova.syncCode", state.syncCode);
   LS.set("nova.tasks", state.tasks);
+  LS.set("nova.activity", state.activity);
 }
 
 /* ---------------- Memory: things Nova knows about you ---------------- */
@@ -1034,6 +1036,119 @@ const APPS = {
   amazon: "https://amazon.com", flipkart: "https://flipkart.com",
 };
 
+/* ═══════════════════════════════════════════════════════════════════
+   ACTION REGISTRY — the single allowlist of everything Nova's agent
+   can do. The AI/model never executes anything directly; every request
+   flows: intent → registry lookup → risk check → confirmation →
+   validated executor (serve.py actuator) → real result → honest report.
+   ═══════════════════════════════════════════════════════════════════ */
+const RISK = { SAFE: "SAFE", LOW: "LOW", HIGH: "HIGH" };
+
+const ACTION_REGISTRY = {
+  /* ---- SAFE: run immediately ---- */
+  open:            { risk: RISK.SAFE, desc: "Open an app or website" },
+  open_path:       { risk: RISK.SAFE, desc: "Reveal a file/folder in Explorer" },
+  stats:           { risk: RISK.SAFE, desc: "CPU / RAM / GPU / battery readout" },
+  storage:         { risk: RISK.SAFE, desc: "Disk usage + biggest folders" },
+  processes:       { risk: RISK.SAFE, desc: "Top background processes by RAM" },
+  network:         { risk: RISK.SAFE, desc: "Wi-Fi status" },
+  find_files:      { risk: RISK.SAFE, desc: "Search files in your personal folders" },
+  list_dir:        { risk: RISK.SAFE, desc: "List a folder's contents" },
+  battery:         { risk: RISK.SAFE, desc: "Battery level" },
+  screenshot:      { risk: RISK.SAFE, desc: "Capture the laptop screen" },
+  cleanup_preview: { risk: RISK.SAFE, desc: "Preview cleanable temp files (deletes nothing)" },
+  gaming_preview:  { risk: RISK.SAFE, desc: "Read current power state + headroom" },
+
+  /* ---- LOW: confirmation by context ---- */
+  create_folder:   { risk: RISK.LOW,  desc: "Create a folder in your personal folders" },
+  rename_file:     { risk: RISK.LOW,  desc: "Rename a file/folder" },
+  move_file:       { risk: RISK.LOW,  desc: "Move a file/folder" },
+  copy_file:       { risk: RISK.LOW,  desc: "Copy a file" },
+  volume:          { risk: RISK.LOW,  desc: "Change laptop volume" },
+  notify:          { risk: RISK.LOW,  desc: "Show a Windows toast" },
+
+  /* ---- HIGH: typed confirmation ALWAYS ---- */
+  cleanup:         { risk: RISK.HIGH, desc: "Delete temp files (24h+, allowlisted dirs)" },
+  trash_path:      { risk: RISK.HIGH, desc: "Move a file/folder to NovaTrash (reversible)" },
+  empty_trash:     { risk: RISK.HIGH, desc: "Permanently empty NovaTrash" },
+  lock:            { risk: RISK.HIGH, desc: "Lock the laptop" },
+  type:            { risk: RISK.HIGH, desc: "Type on the laptop" },
+  key:             { risk: RISK.HIGH, desc: "Send keystrokes to the laptop" },
+  gaming_apply:    { risk: RISK.HIGH, desc: "Switch power mode (settings change)" },
+};
+
+function registryAllows(action) {
+  return Object.prototype.hasOwnProperty.call(ACTION_REGISTRY, action);
+}
+
+/* Every executed action lands in the Activity log — what, when, device, result.
+   Synced with the rest of the payload so phone and laptop share one history. */
+function logActivity(action, summary, status = "completed") {
+  state.activity.unshift({
+    id: "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    action, summary, status, ts: Date.now(), device: deviceName(),
+  });
+  if (state.activity.length > 100) state.activity.length = 100;
+  LS.set("nova.activity", state.activity);
+  scheduleSync();
+}
+
+function activityToText(limit = 14) {
+  const byDay = new Map();
+  for (const a of state.activity.slice(0, limit)) {
+    const d = new Date(a.ts);
+    const key = d.toDateString();
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(a);
+  }
+  const icons = { completed: "✓", running: "…", failed: "✗", cancelled: "–" };
+  let out = "";
+  for (const [day, items] of byDay) {
+    const label = day === new Date().toDateString() ? "Today" : day;
+    out += `**${label}**\n`;
+    for (const a of items) {
+      const time = new Date(a.ts).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+      out += `${icons[a.status] || "·"} ${a.summary} — ${time}${a.device ? ` · ${a.device}` : ""}\n`;
+    }
+    out += "\n";
+  }
+  return out.trim();
+}
+
+/* Central executor: registry check → risk → confirmation → act → log → report.
+   Returns true if the command was handled (success OR failure — both honest). */
+async function runAgentAction(action, arg, opts = {}) {
+  if (!registryAllows(action)) {
+    addBubble("ai", `I don't have a safe tool for “${escHtml(action)}” — it's not in my action registry, so I won't attempt it.`);
+    speak("I don't have a safe tool for that.");
+    return true;
+  }
+  const spec = ACTION_REGISTRY[action];
+  const needsConfirm = spec.risk === RISK.HIGH || (opts.confirm === true);
+  const doRun = async () => {
+    const r = await actOnLaptop(action, arg);
+    if (r && r.ok) {
+      logActivity(action, opts.activitySummary || spec.desc, "completed");
+    } else {
+      logActivity(action, opts.activitySummary || spec.desc, "failed");
+    }
+    return r;
+  };
+
+  if (!needsConfirm) {
+    const r = await doRun();
+    if (!(r && r.ok)) {
+      const why = (r && r.error) ? escHtml(String(r.error).slice(0, 160)) : "the laptop didn't respond";
+      addBubble("ai", `I couldn't ${spec.desc.toLowerCase()}: ${why}.\n\n_If the laptop is asleep, wake it and make sure \`python serve.py\` is running, then try again._`);
+      speak("I couldn't complete that. The laptop didn't respond.");
+    }
+    return { handled: true, result: r };
+  }
+
+  /* HIGH risk → typed confirmation, exactly like the cleanup flow. */
+  return { handled: true, result: null, needsConfirm: true, doRun, spec, arg };
+}
+
 /* ---------------- Nova Agent: helpers ---------------- */
 async function agentStatusReply(text) {
   const r = await actOnLaptop("stats", "");
@@ -1358,6 +1473,137 @@ async function tryCommand(text) {
   if (m) {
     const r = await actOnLaptop("notify", m[1]);
     return say(r.ok ? `🔔 Windows toast sent: “${m[1]}”` : "⚠️ Laptop not reachable", "speak");
+  }
+
+  /* ——— Nova Agent v3: file management (sandboxed to your personal folders) ——— */
+  m = t.match(/^create (?:a )?folder (?:called |named )?["']?(.+?)["']?(?: in (downloads|documents|desktop|pictures|videos|music))?$/i);
+  if (m) {
+    const name = m[1].trim().replace(/[\\/:*?"<>|]/g, "").trim();
+    if (!name) return say("What should the folder be called?");
+    const parent = m[2] ? m[2].charAt(0).toUpperCase() + m[2].slice(1) : "Desktop";
+    const r = await runAgentAction("create_folder", `${parent}/${name}`);
+    if (r.handled && r.result && r.result.ok) return say(`📁 **Folder created:** ${escHtml(name)} in ${parent}.` , "speak");
+    return true; // failure path already reported by runAgentAction
+  }
+  m = t.match(/^rename\s+["']?(.+?)["']?\s+to\s+["']?(.+?)["']?$/i);
+  if (m) {
+    const to = m[2].trim().replace(/[\\/:*?"<>|]/g, "");
+    const r = await runAgentAction("rename_file", { from: m[1].trim(), to });
+    if (r.handled && r.result && r.result.ok) return say(`✏️ **Renamed to** ${escHtml(to)}.`, "speak");
+    return true;
+  }
+  m = t.match(/^(?:move|copy)\s+["']?(.+?)["']?\s+to\s+["']?(.+?)["']?$/i);
+  if (m) {
+    const action = m[0].toLowerCase().startsWith("move") ? "move_file" : "copy_file";
+    const r = await runAgentAction(action, { from: m[1].trim(), to: m[2].trim() });
+    if (r.handled && r.result && r.result.ok) {
+      logActivity(action, `${action === "move_file" ? "Moved" : "Copied"} ${m[1].trim()} → ${m[2].trim()}`, "completed");
+      return say(`${action === "move_file" ? "📦 Moved" : "📄 Copied"} **${escHtml(m[1].trim())}** to **${escHtml(m[2].trim())}**.`, "speak");
+    }
+    return true;
+  }
+  m = t.match(/^(?:delete|trash|remove)\s+["']?(.+?)["']?$/i);
+  if (m && !/^(temp|temporary|cache|junk)/i.test(m[1])) {
+    const target = m[1].trim();
+    const r = await runAgentAction("trash_path", target, { activitySummary: `Trashed ${target}` });
+    if (r.needsConfirm) {
+      openConfirm(`Move “${target}” to NovaTrash?`, `I'll move it to your NovaTrash folder — nothing is permanently deleted, and you can restore it yourself.`, "Move to trash", async () => {
+        const res = await actOnLaptop("trash_path", target);
+        if (res && res.ok) {
+          logActivity("trash_path", `Trashed ${target}`, "completed");
+          addBubble("ai", `🗑️ Moved “${escHtml(target)}” to **NovaTrash** — recoverable, nothing was erased permanently.`);
+          speak("Moved to trash. You can restore it from the NovaTrash folder.");
+        } else {
+          logActivity("trash_path", `Trash ${target} failed`, "failed");
+          const why = (res && res.error) ? escHtml(String(res.error).slice(0, 160)) : "the laptop didn't respond";
+          addBubble("ai", `I couldn't move “${escHtml(target)}”: ${why}.`);
+        }
+        renderHistory();
+      });
+    }
+    return true;
+  }
+  m = t.match(/^empty (?:the )?(?:nova ?)?trash$/i);
+  if (m) {
+    openConfirm("Empty NovaTrash permanently?", `Everything in your NovaTrash folder will be **permanently deleted**. This cannot be undone.`, "Empty trash", async () => {
+      const res = await actOnLaptop("empty_trash", "");
+      if (res && res.ok) {
+        logActivity("empty_trash", `Emptied NovaTrash (${res.freedGb ?? "?"} GB)`, "completed");
+        addBubble("ai", `🧹 NovaTrash emptied — **${res.freedGb ?? "?"} GB** permanently freed.`);
+        speak("Trash emptied.");
+      } else addBubble("ai", "I couldn't empty NovaTrash — is the laptop agent running?");
+      renderHistory();
+    });
+    return true;
+  }
+  m = t.match(/^(?:show|open|list) (?:my |the )?(downloads|documents|desktop|pictures|videos|music)(?: folder)?$/i);
+  if (m) {
+    const folder = m[1].charAt(0).toUpperCase() + m[1].slice(1);
+    const r = await runAgentAction("list_dir", folder);
+    if (r.handled && r.result && r.result.ok) {
+      const entries = r.result.entries || [];
+      logActivity("list_dir", `Listed ${folder}`, "completed");
+      const lines = entries.slice(0, 12).map((e) => `- ${e.type === "folder" ? "📁" : "📄"} ${e.name}${e.sizeMb != null ? ` (${e.sizeMb} MB)` : ""}`);
+      return say(`📂 **${folder}:**\n${lines.join("\n")}${entries.length > 12 ? `\n_…and ${entries.length - 12} more._` : ""}`, "speak");
+    }
+    return true;
+  }
+
+  /* ——— Gaming Mode: real measurements first, confirmation before ANY change ——— */
+  m = t.match(/^(?:boost (?:my )?laptop (?:for )?gaming|gaming mode|enable gaming mode|game mode)$/i);
+  if (m) {
+    const pre = await actOnLaptop("gaming_preview", "");
+    if (!(pre && pre.ok)) {
+      return say("⚠️ The Nova Agent isn't reachable — start it on the laptop with `python serve.py`, then try again.", "speak");
+    }
+    const bits = [];
+    if (pre.currentScheme) bits.push(`Power mode: **${pre.currentScheme}**`);
+    if (pre.freeRamGb) bits.push(`Free RAM: **${pre.freeRamGb} GB**`);
+    if (pre.processes) bits.push(`Background processes: **${pre.processes}**`);
+    if (pre.freeStorageGb != null) bits.push(`Free storage: **${pre.freeStorageGb} GB**`);
+    openConfirm("Enable Gaming Mode?", `Current state:\n${bits.join("\n")}\n\nI'll switch the Windows power mode to **High Performance**. No processes will be closed and no other settings change.`, "Apply Gaming Mode", async () => {
+      const r = await actOnLaptop("gaming_apply", "");
+      if (r && r.ok) {
+        logActivity("gaming_apply", `Gaming mode: power → ${r.after || "high performance"}`, "completed");
+        addBubble("ai", `🎮 **Gaming Mode applied.**\nPower mode: ${escHtml(r.before || "?")} → **${escHtml(r.after || "?")}**\n\n_${r.note || "No processes were closed."} I won't promise FPS numbers — that depends on your game._`);
+        speak("Gaming mode applied. Power mode is now high performance.");
+      } else {
+        logActivity("gaming_apply", "Gaming mode failed", "failed");
+        addBubble("ai", "I couldn't apply Gaming Mode — the power setting didn't change. This can happen on managed/work laptops.");
+      }
+      renderHistory();
+    });
+    return true;
+  }
+
+  /* ——— Activity / action history ——— */
+  m = t.match(/^(?:activity|action history|what did you do(?: today| recently)?|task history|my actions)$/i);
+  if (m) {
+    if (!state.activity.length) return say("📭 No actions yet. Ask me to open something, check the laptop, or clean temp files — everything I do will be logged here.");
+    return say(`📋 **What I've done:**\n\n${activityToText()}`);
+  }
+
+  /* ——— Cross-device routing: “open X on my laptop” ——— */
+  m = t.match(/^open\s+(.+?)\s+on (?:my )?laptop$/i);
+  if (m) {
+    const target = m[1].trim();
+    const ping = await probeAgent();
+    if (!agentOnline) {
+      const task = addTask("open", `Open ${target} on laptop`, `act:open → ${target}`, "waiting");
+      openConfirm(`Laptop is offline — queue “Open ${target}”?`, `Your laptop isn't reachable right now. I'll save this as a pending task${task.id ? ` (${task.id})` : ""} and it runs the next time the laptop agent connects. Nothing is pretended.`, "Queue task", () => {
+        addBubble("ai", `📌 Queued: **Open ${escHtml(target)} on your laptop.** It will run when the agent is back online.`);
+        speak("The laptop is offline. I've queued the task.");
+        renderHistory();
+      });
+      return true;
+    }
+    const r = await actOnLaptop("open", target);
+    if (r && r.ok) {
+      logActivity("open", `Opened ${target} on laptop (from phone)`, "completed");
+      return say(`✅ **${escHtml(target)}** is open on your laptop.`, "speak");
+    }
+    logActivity("open", `Open ${target} on laptop failed`, "failed");
+    return say(`I couldn't open **${escHtml(target)}** on the laptop${r && r.error ? `: ${escHtml(String(r.error).slice(0, 120))}` : ""}.`);
   }
 
   return false; // not a command → send to AI
@@ -3843,6 +4089,7 @@ function syncPayload() {
     nickname: state.nickname,
     handsFree: !!state.handsFree,
     tasks: state.tasks,
+    activity: state.activity.slice(0, 40),
     _ts: Date.now(),
   };
 }
@@ -3928,6 +4175,13 @@ function applySynced(data) {
       .filter((t) => t.status !== "done" && t.status !== "cancelled" || Date.now() - (t.updatedTs || t.ts || 0) < 86400000)
       .sort((a, b) => (b.updatedTs || b.ts) - (a.updatedTs || a.ts))
       .slice(0, 10);
+  }
+  if (Array.isArray(data.activity)) {
+    const byId = new Map(state.activity.map((a) => [a.id, a]));
+    for (const a of data.activity) if (a && a.id) byId.set(a.id, a);
+    state.activity = [...byId.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 100);
+    LS.set("nova.activity", state.activity);
+    changed = true;
   }
   if (changed) { saveAll(); renderHistory(); renderMessages(); }
   return changed;

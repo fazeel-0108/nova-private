@@ -9,6 +9,7 @@ import http.server
 import json
 import os
 import re
+import shutil
 import socket
 import socketserver
 import subprocess
@@ -330,6 +331,285 @@ def _act_open_path(arg):
         return {"ok": False, "error": str(e)[:200]}
 
 
+# ---------------- Nova Agent v3: file management, gaming mode, action log ----------------
+# Every path touching action resolves through _resolve_user_path: absolute,
+# inside the user profile, restricted to personal folders, `..` refused,
+# sensitive trees (AppData/Windows/Program Files) refused. The AI can never
+# name a path outside this sandbox — model-supplied paths are never trusted.
+
+_USER_DIRS = ["Desktop", "Documents", "Downloads", "Videos", "Pictures", "Music"]
+_TOKEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nova_agent.token")
+_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nova_agent_log.json")
+
+
+def _agent_token():
+    """Local device credential. Created once; LAN callers must present it or a
+    paired sync code. localhost is always trusted (it IS the owner's session)."""
+    try:
+        with open(_TOKEN_PATH, "r", encoding="utf-8") as f:
+            tok = f.read().strip()
+            if tok:
+                return tok
+    except OSError:
+        pass
+    tok = base64.urlsafe_b64encode(os.urandom(24)).decode().rstrip("=")
+    try:
+        with open(_TOKEN_PATH, "w", encoding="utf-8") as f:
+            f.write(tok)
+        if os.name == "nt":
+            os.system(f"attrib +h {chr(34)}{_TOKEN_PATH}{chr(34)}")
+    except OSError:
+        pass
+    return tok
+
+
+def _log_action(action, arg_summary, ok):
+    """Append to the action log — what ran, when, with what (sanitized) argument."""
+    try:
+        try:
+            with open(_LOG_PATH, "r", encoding="utf-8") as f:
+                log = json.load(f)
+        except Exception:
+            log = []
+        log.append({"ts": int(time.time()), "action": action,
+                    "arg": str(arg_summary)[:80], "ok": bool(ok)})
+        with open(_LOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(log[-200:], f)
+    except Exception:
+        pass
+
+
+def _resolve_user_path(p):
+    """Validate + resolve a model- or user-supplied path. Returns an absolute
+    path inside the user's personal folders, or None (refused)."""
+    p = str(p or "").strip().strip('"').strip("'")
+    if not p or ".." in p:
+        return None
+    if re.match(r"^[a-zA-Z]:$", p):          # bare drive letter
+        return None
+    home = os.path.normpath(os.path.expanduser("~"))
+    if not os.path.isabs(p):
+        p = os.path.join(home, p)
+    p = os.path.normpath(os.path.abspath(p))
+    if not (p == home or p.startswith(home + os.sep)):
+        return None
+    low = p.lower()
+    for bad in ("appdata", "windows", "program files", "programdata", "$recycle.bin", ".git"):
+        if os.sep + bad in low:
+            return None
+    try:
+        rel = os.path.relpath(p, home)
+    except ValueError:
+        return None
+    if rel == ".":
+        return p
+    top = rel.split(os.sep)[0].lower()
+    allowed = [d.lower() for d in _USER_DIRS] + ["novatrash"]
+    if top not in allowed:
+        return None
+    return p
+
+
+def _act_create_folder(arg):
+    p = _resolve_user_path(arg)
+    if not p:
+        return {"ok": False, "error": "folder must be in Desktop/Documents/Downloads/Videos/Pictures/Music"}
+    if os.path.exists(p):
+        if os.path.isdir(p):
+            return {"ok": True, "result": f"folder already exists: {p}", "path": p}
+        return {"ok": False, "error": "a file with that name exists"}
+    os.makedirs(p)
+    return {"ok": True, "result": f"created {p}", "path": p, "verified": os.path.isdir(p)}
+
+
+def _two_paths(arg):
+    if not isinstance(arg, dict):
+        return None, None
+    src = _resolve_user_path(arg.get("from") or arg.get("src"))
+    dst = _resolve_user_path(arg.get("to") or arg.get("dst"))
+    return src, dst
+
+
+def _act_rename_file(arg):
+    src, dst = _two_paths(arg)
+    if not src or not dst:
+        return {"ok": False, "error": "paths refused (must be in your personal folders)"}
+    if not os.path.exists(src):
+        return {"ok": False, "error": f"source not found: {src}"}
+    if os.path.exists(dst):
+        return {"ok": False, "error": "target already exists — nothing overwritten"}
+    os.rename(src, dst)
+    return {"ok": True, "result": f"renamed to {os.path.basename(dst)}", "verified": os.path.exists(dst)}
+
+
+def _act_move_file(arg):
+    src, dst = _two_paths(arg)
+    if not src or not dst:
+        return {"ok": False, "error": "paths refused (must be in your personal folders)"}
+    if not os.path.exists(src):
+        return {"ok": False, "error": f"source not found: {src}"}
+    if os.path.isdir(dst):
+        dst = os.path.join(dst, os.path.basename(src))
+    if os.path.exists(dst):
+        return {"ok": False, "error": "target already exists — nothing overwritten"}
+    shutil.move(src, dst)
+    return {"ok": True, "result": f"moved to {dst}", "verified": os.path.exists(dst) and not os.path.exists(src)}
+
+
+def _act_copy_file(arg):
+    src, dst = _two_paths(arg)
+    if not src or not dst:
+        return {"ok": False, "error": "paths refused (must be in your personal folders)"}
+    if not os.path.isfile(src):
+        return {"ok": False, "error": "source is not a file"}
+    if os.path.isdir(dst):
+        dst = os.path.join(dst, os.path.basename(src))
+    if os.path.exists(dst):
+        return {"ok": False, "error": "target already exists — nothing overwritten"}
+    shutil.copy2(src, dst)
+    return {"ok": True, "result": f"copied to {dst}", "verified": os.path.isfile(dst)}
+
+
+def _act_trash_path(arg):
+    """REVERSIBLE delete: move the file/folder into ~/NovaTrash/. Nothing is
+    permanently erased — the user empties NovaTrash themselves. Only paths
+    resolved inside the personal-folder sandbox are accepted."""
+    p = _resolve_user_path(arg)
+    if not p:
+        return {"ok": False, "error": "path refused (must be in your personal folders)"}
+    home = os.path.normpath(os.path.expanduser("~"))
+    trash = os.path.join(home, "NovaTrash")
+    if os.path.normcase(p) == os.path.normcase(trash):
+        return {"ok": False, "error": "cannot trash NovaTrash itself"}
+    if not os.path.exists(p):
+        return {"ok": False, "error": f"not found: {p}"}
+    os.makedirs(trash, exist_ok=True)
+    dst = os.path.join(trash, os.path.basename(p) or "item")
+    n = 1
+    stem, ext = os.path.splitext(dst)
+    while os.path.exists(dst):
+        dst = f"{stem} ({n}){ext}"
+        n += 1
+    shutil.move(p, dst)
+    return {"ok": True, "result": f"moved to NovaTrash: {os.path.basename(dst)}",
+            "verified": os.path.exists(dst) and not os.path.exists(p),
+            "note": "reversible — nothing was permanently deleted"}
+
+
+def _act_empty_trash(_):
+    """Permanently empty ~/NovaTrash/ — HIGH risk, only after typed YES."""
+    trash = os.path.join(os.path.normpath(os.path.expanduser("~")), "NovaTrash")
+    if not os.path.isdir(trash):
+        return {"ok": True, "result": "NovaTrash is already empty", "freedGb": 0}
+    gb = _dir_size_gb(trash)
+    n = 0
+    for r, _, fs in os.walk(trash, onerror=lambda e: None):
+        for f in fs:
+            try:
+                os.remove(os.path.join(r, f))
+                n += 1
+            except OSError:
+                pass
+    for r, dirs, _ in os.walk(trash, topdown=False, onerror=lambda e: None):
+        for d in dirs:
+            try:
+                os.rmdir(os.path.join(r, d))
+            except OSError:
+                pass
+    return {"ok": True, "result": f"emptied NovaTrash ({n} files)", "freedGb": round(gb, 2)}
+
+
+def _act_list_dir(arg):
+    p = _resolve_user_path(arg)
+    if not p or not os.path.isdir(p):
+        return {"ok": False, "error": "folder not found in your personal folders"}
+    entries = []
+    try:
+        for name in sorted(os.listdir(p))[:40]:
+            fp = os.path.join(p, name)
+            if os.path.isdir(fp):
+                entries.append({"name": name, "type": "folder"})
+            else:
+                st = os.stat(fp)
+                entries.append({"name": name, "type": "file",
+                                "sizeMb": round(st.st_size / (1024 ** 2), 1)})
+    except OSError as e:
+        return {"ok": False, "error": str(e)[:120]}
+    return {"ok": True, "path": p, "entries": entries}
+
+
+def _act_processes(_):
+    ps = ("Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 12 "
+          "Name, @{n='RamMb';e={[math]::Round($_.WorkingSet64/1MB,0)}} | "
+          "ForEach-Object { $_.Name + '|' + $_.RamMb }")
+    out = _ps(ps, timeout=20)
+    procs = []
+    if out:
+        for line in out.splitlines():
+            parts = line.split("|")
+            if len(parts) == 2 and parts[1].strip().isdigit():
+                procs.append({"name": parts[0], "ramMb": int(parts[1])})
+    return {"ok": bool(procs), "processes": procs}
+
+
+def _act_network(_):
+    ssid = _ps("(netsh wlan show interfaces) -match 'SSID' | Select-Object -First 1")
+    state_ = _ps("(netsh wlan show interfaces) -match 'State' | Select-Object -First 1")
+    out = {}
+    if ssid:
+        out["wifi"] = ssid.split(":", 1)[1].strip() if ":" in ssid else ""
+    if state_:
+        out["state"] = state_.split(":", 1)[1].strip() if ":" in state_ else ""
+    out["ok"] = bool(out)
+    return out
+
+
+_POWER_GUIDS = {
+    "high performance": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+    "balanced": "381b4222-f694-41f0-9685-ff5bb260df2e",
+    "power saver": "a1841308-3541-4fab-bc81-f71556f20b4a",
+}
+
+
+def _power_scheme():
+    out = _ps("powercfg /getactivescheme", timeout=10)
+    if not out:
+        return None
+    m = re.search(r"\(([^)]+)\)", out)
+    return m.group(1) if m else out.strip()
+
+
+def _act_gaming_preview(_):
+    """Read-only: what Gaming Mode would change + current headroom."""
+    scheme = _power_scheme()
+    free = _ps("$o=Get-CimInstance Win32_OperatingSystem; [math]::Round($o.FreePhysicalMemory/1MB,1)")
+    procs = _ps("(Get-Process).Count")
+    storage = _act_storage("")
+    c_free = None
+    if storage.get("ok"):
+        for d in storage.get("disks", []):
+            try:
+                c_free = round(float(d["totalGb"]) - float(d["usedGb"]), 1)
+                break
+            except (KeyError, ValueError):
+                pass
+    return {"ok": True, "currentScheme": scheme or "unknown",
+            "freeRamGb": free, "processes": procs, "freeStorageGb": c_free}
+
+
+def _act_gaming_apply(_):
+    """Apply ONLY safe optimizations: switch to High Performance power mode.
+    No process killing, no registry edits, no overclocks. Verified after."""
+    before = _power_scheme()
+    guid = _POWER_GUIDS["high performance"]
+    subprocess.run(["powercfg", "/setactive", guid], capture_output=True, timeout=15)
+    after = _power_scheme()
+    changed = bool(after) and before != after
+    return {"ok": True, "before": before or "unknown", "after": after or "unknown",
+            "changed": changed,
+            "note": "power mode switched; no processes were closed"}
+
+
 ACTIONS = {
     "open": _act_open, "volume": _act_volume, "type": _act_type,
     "key": _act_key, "clipboard": _act_clipboard, "notify": _act_notify,
@@ -338,6 +618,13 @@ ACTIONS = {
     "stats": _act_stats, "storage": _act_storage,
     "cleanup_preview": _act_cleanup_preview, "cleanup": _act_cleanup,
     "find_files": _act_find_files, "open_path": _act_open_path,
+    # Nova Agent v3 — file management (sandboxed), processes, network, gaming
+    "create_folder": _act_create_folder, "rename_file": _act_rename_file,
+    "move_file": _act_move_file, "copy_file": _act_copy_file,
+    "trash_path": _act_trash_path, "empty_trash": _act_empty_trash,
+    "list_dir": _act_list_dir, "processes": _act_processes,
+    "network": _act_network, "gaming_preview": _act_gaming_preview,
+    "gaming_apply": _act_gaming_apply,
 }
 
 
@@ -346,13 +633,36 @@ def handle_act(body):
     fn = ACTIONS.get(action)
     if not fn:
         return 400, {"error": "unknown action", "known": list(ACTIONS)}
+    arg = body.get("arg", "")
     try:
-        result = fn(body.get("arg", ""))
+        result = fn(arg)
+        ok = result.get("ok", True) if isinstance(result, dict) else True
+        _log_action(action, arg if isinstance(arg, str) else json.dumps(arg)[:80], ok)
         if isinstance(result, dict):
-            return 200, {"ok": True, **result}
+            return 200, {**result}
         return 200, {"ok": True, "result": result}
     except Exception as e:  # noqa: BLE001
-        return 500, {"error": str(e)[:300]}
+        _log_action(action, arg if isinstance(arg, str) else "", False)
+        return 500, {"ok": False, "error": str(e)[:300]}
+
+
+def _act_authorized(self):
+    """Auth for /api/act: localhost is trusted; LAN callers must present the
+    device token or a paired sync code (any device holding the sync code can
+    already read all synced data, so it is a valid credential)."""
+    ip = self.client_address[0]
+    if ip in ("127.0.0.1", "::1", "localhost"):
+        return True
+    tok = (self.headers.get("X-Nova-Token") or "").strip()
+    if not tok:
+        return False
+    if tok == _agent_token():
+        return True
+    up = tok.upper()
+    if re.fullmatch(r"[A-Z0-9-]{4,12}", up):
+        with _lock:
+            return up in _load_store()
+    return False
 
 # ---------------- Tiny sync store (laptop <-> phone) ----------------
 # POST /api/sync  {code, device, payload}  -> merges payload into the store
@@ -484,8 +794,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif parts.path.rstrip("/") == "/api/ping":
             # Lightweight agent heartbeat: lets the UI show REAL agent status.
             import platform
-            self._json(200, {"ok": True, "agent": "nova-local", "version": 2,
-                             "device": platform.node() or "laptop"})
+            self._json(200, {"ok": True, "agent": "nova-local", "version": 3,
+                             "device": platform.node() or "laptop",
+                             "capabilities": sorted(ACTIONS)})
+        elif parts.path.rstrip("/") == "/api/log":
+            try:
+                with open(_LOG_PATH, "r", encoding="utf-8") as f:
+                    log = json.load(f)
+            except Exception:
+                log = []
+            self._json(200, {"ok": True, "log": log[-50:]})
         else:
             super().do_GET()
 
@@ -571,14 +889,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
             self.handle_sync({}, body=body)
         elif self.path.rstrip("/") == "/api/act":
-            length = int(self.headers.get("Content-Length", 0))
             try:
-                body = json.loads(self.rfile.read(length) or b"{}")
-            except Exception:
-                self._json(400, {"error": "bad json"})
-                return
-            code, resp = handle_act(body)
-            self._json(code, resp)
+                if not _act_authorized(self):
+                    self._json(401, {"ok": False, "error": "unauthorized",
+                                     "hint": "pair this device with a sync code, or run Nova on the laptop itself"})
+                    return
+                length = int(self.headers.get("Content-Length", 0))
+                try:
+                    body = json.loads(self.rfile.read(length) or b"{}")
+                except Exception:
+                    self._json(400, {"error": "bad json"})
+                    return
+                code, resp = handle_act(body)
+                self._json(code, resp)
+            except (ConnectionAbortedError, BrokenPipeError):
+                pass  # client gave up mid-request — nothing to answer
         elif self.path.rstrip("/") == "/api/ollama/chat":
             self.ollama_chat()
         else:
@@ -679,6 +1004,7 @@ if __name__ == "__main__":
     print("  -----------------")
     print(f"  On this computer :  http://localhost:{PORT}")
     print(f"  On your phone    :  http://{ip}:{PORT}   (same Wi-Fi, for install testing)")
+    print("  Agent actions from other devices need your sync code (auto-sent by the app).")
     print()
     with ReusableTCPServer(("0.0.0.0", PORT), Handler) as httpd:
         try:

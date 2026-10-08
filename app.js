@@ -583,9 +583,16 @@ function renameChat(id, container) {
   inp.onblur = commit;
 }
 
+/* Long chats: rendering hundreds of bubbles at once is what makes big
+   conversations feel sluggish. Render the most recent window (50) and add a
+   real "Load earlier messages" control — nothing is hidden permanently. */
+const MSG_WINDOW = 50;
+let renderWindow = { chatId: null, n: MSG_WINDOW };
+
 function renderMessages() {
   el.messages.innerHTML = "";
   const chat = currentChat();
+  if (renderWindow.chatId !== chat.id) renderWindow = { chatId: chat.id, n: MSG_WINDOW };
   el.modeChip.textContent = MODE_LABELS[chat.mode] || "Chat";
   if (!chat.messages.length) {
     const hi = document.createElement("div");
@@ -607,7 +614,23 @@ function renderMessages() {
     if (knowYou) { state.profile.asked = true; LS.set("nova.profile", state.profile); }
     el.messages.appendChild(hi);
   }
-  chat.messages.forEach((m, i) => {
+  const msgs = chat.messages;
+  const start = Math.max(0, msgs.length - renderWindow.n);
+  if (start > 0) {
+    const older = document.createElement("button");
+    older.className = "load-earlier";
+    older.type = "button";
+    older.textContent = `Load ${Math.min(MSG_WINDOW, start)} earlier messages (${start} hidden)`;
+    older.onclick = () => {
+      const prevHeight = el.messages.scrollHeight;
+      const prevTop = el.messages.scrollTop;
+      renderWindow.n += MSG_WINDOW;
+      renderMessages();   // re-anchors to bottom; we restore the reading spot below
+      el.messages.scrollTop = el.messages.scrollHeight - prevHeight + prevTop;
+    };
+    el.messages.appendChild(older);
+  }
+  msgs.slice(start).forEach((m, i) => {
     const bub = addBubble(m.role, m.content, false);
     bub.parentElement.style.setProperty("--i", i);
   });
@@ -782,14 +805,28 @@ async function callAI(messages, onDelta) {
   }
   if (provider === "tokenharbor" || provider === "groq" || provider === "openrouter" || provider === "cleanapis" || provider === "auto") {
     // Server-relayed brains: keys live in Netlify env vars, never in the browser.
-    const j = await fetch("/api/chat", {
+    // REAL streaming: /api/chat pipes the upstream SSE through token-by-token;
+    // a plain JSON reply (older server or provider hiccup) is handled as fallback.
+    const res = await aiFetch("/api/chat", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider, model, messages, stream: false }),
-    }).then((r) => r.json()).catch(() => null);
-    if (!j || j.error) throw new Error((j && j.error) || "relay failed");
-    if (j.fallbackUsed) toast(`Answered by ${j.actualProvider || "free fallback"} — ${provider} unavailable`, "warn");
+      body: JSON.stringify({ provider, model, messages, stream: true }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => null);
+      throw new Error((j && j.error) || "relay failed");
+    }
+    const meta = parseNovaMeta(res.headers);
+    if (meta && meta.fallbackUsed) toast(`Answered by ${meta.actualProvider || "free fallback"} — ${provider} unavailable`, "warn");
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("text/event-stream")) {
+      return await readSSE(res, (json) => json?.choices?.[0]?.delta?.content || "", onDelta);
+    }
+    const j = await res.json();
+    if (j.error) throw new Error(j.error);
+    const m2 = j.meta || meta;
+    if (m2 && m2.fallbackUsed) toast(`Answered by ${m2.actualProvider || "free fallback"} — ${provider} unavailable`, "warn");
     const txt = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "";
-    onDelta(txt);
+    if (txt) onDelta(txt);
     return;
   }
   if (provider === "ollama") {
@@ -925,7 +962,7 @@ async function runWithTools(endpoint, headers, payload, onDelta, depth = 0) {
    - Proxy unreachable → try direct once, then explain how to start the server. */
 async function callFreeAI(messages, onDelta, stream = true) {
   const attempt = async (url, allowStream) => {
-    const res = await fetch(url, {
+    const res = await aiFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "openai", messages, stream: allowStream }),
@@ -960,6 +997,35 @@ function friendlyError(err) {
     return "Can't reach the AI relay — if you opened Nova as a file, run the server instead: `python serve.py` → open http://localhost:8080. If it's already running, check your internet.";
   }
   return err.message;
+}
+
+/* ═══════ REQUEST DISCIPLINE: one in-flight AI request, ever ═══════
+   A new AI request aborts the previous one (no abandoned streams burning
+   bandwidth/CPU), every request carries a hard timeout, and parseNovaMeta
+   reads the server's truthful routing metadata from the response header. */
+let novaInflight = null;
+function aiFetch(url, opts = {}, timeoutMs = 120000) {
+  if (novaInflight) { try { novaInflight.abort(); } catch { /* already dead */ } }
+  const ac = new AbortController();
+  novaInflight = ac;
+  // Timeout abort carries a REASON → surfaces as a real error the user can
+  // act on. Superseded aborts (new request takes over) carry no reason.
+  const timer = setTimeout(() => {
+    try { ac.abort(new Error("The AI didn't respond within " + Math.round(timeoutMs / 1000) + "s — the provider or your connection may be down. Try again.")); } catch { /* already dead */ }
+  }, timeoutMs);
+  return fetch(url, { ...opts, signal: ac.signal }).finally(() => {
+    clearTimeout(timer);
+    if (novaInflight === ac) novaInflight = null;
+  });
+}
+function isSupersededRequest(err) {
+  return err && (err.name === "AbortError" || String(err.message || "").includes("aborted"));
+}
+function parseNovaMeta(headers) {
+  try {
+    const b64 = headers && headers.get("X-Nova-Meta");
+    return b64 ? JSON.parse(atob(b64)) : null;
+  } catch { return null; }
 }
 
 async function readSSE(res, pick, onDelta) {
@@ -2569,6 +2635,9 @@ async function handleSend(text, opts = {}) {
     celebrateFromSend();
     speak(full);
   } catch (err) {
+    // This request was aborted because a NEWER request superseded it — the
+    // newer one owns the UI now; stay quiet instead of painting stale errors.
+    if (isSupersededRequest(err)) return;
     // Key problems (no credits / invalid / rate-limited)? Never leave the user
     // stuck: answer with the built-in free AI instead.
     const msgText = friendlyError(err);
@@ -2606,11 +2675,30 @@ async function handleSend(text, opts = {}) {
 }
 
 let streamText = "";
-function renderStream(bub, full) {
-  streamText = full;
+/* Streaming render: markdown re-parse is O(full length) per call, so raw
+   per-token calls made it O(n²) over a response. Paint at most ~11×/s
+   (beyond human perception) with a trailing flush, then the completed
+   message is painted once more by addBubble — identical end state. */
+let lastStreamPaint = 0, streamPaintTimer = null;
+function paintStream(bub, full) {
   bub.classList.add("streaming");
   bub.innerHTML = renderMd(full) + '<span class="cursor">▍</span>';
   scrollBottom();
+}
+function renderStream(bub, full) {
+  streamText = full;
+  const now = performance.now();
+  if (now - lastStreamPaint >= 90) {
+    lastStreamPaint = now;
+    if (streamPaintTimer) { clearTimeout(streamPaintTimer); streamPaintTimer = null; }
+    paintStream(bub, full);
+  } else if (!streamPaintTimer) {
+    streamPaintTimer = setTimeout(() => {
+      streamPaintTimer = null;
+      lastStreamPaint = performance.now();
+      paintStream(bub, streamText);
+    }, 90);
+  }
 }
 
 function updateQueueInfo() {
@@ -3946,6 +4034,21 @@ function wire() {
   const themeSel = $("#set-theme");
   if (themeSel) themeSel.onchange = () => { state.theme = themeSel.value; LS.set("nova.theme", state.theme); applyTheme(); };
 
+  /* Performance mode in Settings → Performance — changes REAL behavior:
+     the background canvas render scale + frame caps (see bgfx.js). */
+  state.perfMode = LS.get("nova.perfMode", "balanced");
+  const perfSel = $("#set-perfmode");
+  if (perfSel) {
+    perfSel.value = state.perfMode;
+    perfSel.onchange = () => {
+      state.perfMode = perfSel.value;
+      LS.set("nova.perfMode", state.perfMode);
+      if (window.NovaFX && window.NovaFX.setPerf(state.perfMode)) {
+        toast("Performance mode: " + state.perfMode, "ok");
+      }
+    };
+  }
+
   // PWA install prompt — hide the button entirely once installed
   const standalone = matchMedia("(display-mode: standalone)").matches ||
     matchMedia("(display-mode: window-controls-overlay)").matches ||
@@ -4229,11 +4332,12 @@ function scheduleSync() {
   syncTimer = setTimeout(() => doSync(true), 2500); // debounced push after activity
 }
 
-/* Real-time-ish sync: poll the shared revision every 4s while the app is
-   visible; if another device pushed, pull + merge instantly. Cheap: one
-   tiny GET. */
+/* Real-time-ish sync: SSE gives instant push; the poll is the backup.
+   While SSE is healthy, poll at a relaxed 15s instead of 4s — same
+   freshness, a quarter of the requests. */
 let lastSeenRev = -1;
 let syncSSE = null;
+let lastSSEEventAt = 0;
 
 /* Instant push: a live SSE stream fires the moment another device pushes.
    Falls back to 4s polling if SSE is unavailable. */
@@ -4245,6 +4349,7 @@ function openSyncStream() {
     syncSSE.addEventListener("rev", (e) => {
       try {
         const { rev } = JSON.parse(e.data);
+        lastSSEEventAt = Date.now();
         if (lastSeenRev !== -1 && rev !== lastSeenRev) {
           fetch("/api/sync?code=" + encodeURIComponent(state.syncCode)).then((r) => r.json()).then((remote) => {
             if (remote.data) applySynced(remote.data);
@@ -4259,6 +4364,8 @@ function openSyncStream() {
 
 async function watchSync() {
   if (!state.syncCode || document.hidden) return;
+  // SSE connected and recently alive → it already pushed us everything.
+  if (syncSSE && syncSSE.readyState === 1 && Date.now() - lastSSEEventAt < 15000) return;
   try {
     const res = await fetch("/api/sync?code=" + encodeURIComponent(state.syncCode));
     if (!res.ok) return;

@@ -351,11 +351,24 @@
             </div>
           </div>
 
-          <!-- Performance — only appears with real data from a connected agent -->
+          <!-- Performance — real device settings + live agent readings -->
           <div class="settings-page hidden" data-page="performance">
             <h3>Performance</h3>
-            <p class="page-sub">Live readings from this laptop's Nova Agent. Nothing is estimated.</p>
+            <p class="page-sub">How Nova uses this device's resources. Every option changes real behavior.</p>
             <div class="settings-section">
+              <div class="sec-title">This device</div>
+              <label class="field">
+                <span>Performance mode</span>
+                <select id="set-perfmode">
+                  <option value="balanced">Balanced — smooth visuals, efficient GPU (recommended)</option>
+                  <option value="fast">Fast — lighter visuals, more headroom</option>
+                  <option value="battery">Battery saver — minimal GPU, longest runtime</option>
+                </select>
+                <small>Changes the background's render resolution and frame rate. Balanced caps idle animation at 30fps — visually identical, half the GPU work.</small>
+              </label>
+            </div>
+            <div class="settings-section">
+              <div class="sec-title">Laptop agent</div>
               <div id="perf-body" class="dev-list"><div class="dev-row muted">Requires the Nova Agent — start it with <b>python serve.py</b> on the laptop, or open Nova there.</div></div>
               <button id="btn-perf-refresh" class="btn-ghost" type="button" style="align-self:flex-start">Refresh</button>
             </div>

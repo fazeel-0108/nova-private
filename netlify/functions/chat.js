@@ -1,10 +1,13 @@
-// Netlify Function: /api/chat relay + /api/health.
+// Netlify Function: /api/chat relay (real streaming) + /api/health.
 // Provider keys live ONLY in Netlify environment variables — never in the
 // frontend, never in git. Migration 2026-10-07 (keys were previously shipped
 // to every browser inside app.js).
 //   TOKENHARBOR_KEY_1, TOKENHARBOR_KEY_2, GROQ_KEY, OPENROUTER_KEY
 // Fallback chain: requested provider → verified keyless Pollinations.
 // meta in the response tells the truth about what actually answered.
+// Streaming: when body.stream is true the upstream SSE is piped through
+// token-by-token (Netlify Functions v2 supports streamed Response bodies),
+// with request meta in the X-Nova-Meta header. Non-streaming unchanged.
 
 const POLLINATIONS = "https://text.pollinations.ai/openai";
 const EP = {
@@ -28,26 +31,20 @@ const envKeys = () => ({
   cleanapis: process.env.CLEANAPIS_KEY ? [process.env.CLEANAPIS_KEY] : [],
 });
 
-const json = (code, obj) => ({
-  statusCode: code,
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(obj),
-});
+const json = (obj, status = 200, extra = {}) =>
+  new Response(JSON.stringify(obj), {
+    status,
+    headers: { "Content-Type": "application/json", ...extra },
+  });
 
-async function callOpenAI(endpoint, key, model, messages, extra = {}) {
+async function callOpenAI(endpoint, key, model, messages, extra = {}, stream = false) {
   const headers = { "Content-Type": "application/json" };
   if (key) headers.Authorization = "Bearer " + key;
-  const upstream = await fetch(endpoint, {
+  return fetch(endpoint, {
     method: "POST",
     headers: { ...headers, ...extra },
-    body: JSON.stringify({ model, messages, stream: false }),
+    body: JSON.stringify({ model, messages, stream }),
   });
-  const data = await upstream.json().catch(() => null);
-  if (!upstream.ok || !data || data.error) {
-    const msg = (data && data.error && (data.error.message || JSON.stringify(data.error))) || "HTTP " + upstream.status;
-    throw new Error(String(msg).slice(0, 180));
-  }
-  return data;
 }
 
 // Ordered fallback chain per requested provider. Only verified providers.
@@ -85,12 +82,19 @@ function chainFor(provider, model) {
 
 async function handleChat(body) {
   const requested = body.provider || "auto";
+  const stream = !!body.stream;
   const chain = chainFor(requested, body.model);
   let lastErr = null;
   for (const hop of chain) {
     for (const key of hop.keys) {
       try {
-        const data = await callOpenAI(hop.endpoint, key, hop.model, body.messages || [], hop.extra || {});
+        const upstream = await callOpenAI(hop.endpoint, key, hop.model, body.messages || [], hop.extra || {}, stream);
+        if (!upstream.ok) {
+          const data = await upstream.json().catch(() => null);
+          const msg = (data && data.error && (data.error.message || JSON.stringify(data.error))) || "HTTP " + upstream.status;
+          throw new Error(String(msg).slice(0, 180));
+        }
+        const ct = upstream.headers.get("content-type") || "";
         const meta = {
           requestedProvider: requested,
           requestedModel: body.model || null,
@@ -98,13 +102,28 @@ async function handleChat(body) {
           actualModel: hop.model,
           fallbackUsed: requested !== "auto" && hop.provider !== requested,
         };
-        return json(200, { ...data, meta });
+        const metaH = { "X-Nova-Meta": Buffer.from(JSON.stringify(meta)).toString("base64") };
+        if (stream && ct.includes("event-stream") && upstream.body) {
+          // Token-by-token pass-through: real streaming, no buffering.
+          return new Response(upstream.body, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/event-stream; charset=utf-8",
+              "Cache-Control": "no-store",
+              "X-Accel-Buffering": "no",
+              ...metaH,
+            },
+          });
+        }
+        const data = await upstream.json();
+        if (data.error) throw new Error(String(data.error.message || JSON.stringify(data.error)).slice(0, 180));
+        return json({ ...data, meta }, 200, metaH);
       } catch (e) {
         lastErr = e.message;
       }
     }
   }
-  return json(502, { error: "all providers failed" + (lastErr ? ": " + lastErr : "") });
+  return json({ error: "all providers failed" + (lastErr ? ": " + lastErr : "") }, 502);
 }
 
 /* ---- /api/health: REAL probes, no secrets in the response ---- */
@@ -113,14 +132,16 @@ const withTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Err
 async function probe(endpoint, key, model) {
   const t0 = Date.now();
   try {
-    await Promise.race([callOpenAI(endpoint, key, model, [{ role: "user", content: "ping" }]), withTimeout(6000)]);
+    const r = await Promise.race([callOpenAI(endpoint, key, model, [{ role: "user", content: "ping" }]), withTimeout(6000)]);
+    if (!r.ok) throw new Error("status");
+    await r.json().catch(() => null);
     return { ok: true, latencyMs: Date.now() - t0 };
   } catch {
     return { ok: false, latencyMs: Date.now() - t0 };
   }
 }
 async function handleHealth() {
-  if (HCACHE && Date.now() - HAT < 300000) return json(200, HCACHE);
+  if (HCACHE && Date.now() - HAT < 300000) return json(HCACHE);
   const k = envKeys();
   const [pFree, pTH, pGr, pOr, pCa] = await Promise.all([
     probe(POLLINATIONS, "", DEFAULT_MODEL.pollinations),
@@ -146,18 +167,18 @@ async function handleHealth() {
     checkedAt: new Date().toISOString(),
   };
   HAT = Date.now();
-  return json(200, HCACHE);
+  return json(HCACHE);
 }
 
-export async function handler(event) {
-  const path = event.path || "";
-  if (path.includes("health")) return handleHealth();
-  if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed" });
+export default async (req) => {
+  const path = (req.url || "").split("?")[0];
+  if (req.method === "GET" && path.includes("health")) return handleHealth();
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
   let body;
   try {
-    body = typeof event.body === "string" ? JSON.parse(event.body || "{}") : event.body || {};
+    body = await req.json();
   } catch {
-    return json(400, { error: "bad json" });
+    return json({ error: "bad json" }, 400);
   }
   return handleChat(body);
-}
+};

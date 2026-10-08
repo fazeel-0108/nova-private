@@ -16,7 +16,23 @@
 
   const MOBILE = Math.min(window.innerWidth, window.innerHeight) < 640 ||
     /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const DPR = () => Math.min(window.devicePixelRatio || 1, MOBILE ? 1.2 : 1.5);
+
+  /* ═══════ PERFORMANCE MODES — each one changes real behavior ═══════
+     scale: internal render resolution (the shader is smooth; CSS upscales
+     it — you cannot see the difference, the GPU surely can).
+     fps: frame cap (the animation is slow swirling — 30fps is visually
+     identical when idle; full 60 only while Nova is actually busy).
+     Stored in localStorage('nova.perfMode') — set from Settings → Performance. */
+  const PERF = {
+    balanced: { scale: 0.75, fpsIdle: 30, fpsActive: 60 },
+    fast:     { scale: 0.55, fpsIdle: 30, fpsActive: 45 },
+    battery:  { scale: 0.45, fpsIdle: 20, fpsActive: 30 },
+  };
+  let perfMode = PERF.balanced;
+  try {
+    const saved = localStorage.getItem("nova.perfMode");
+    if (saved && PERF[saved]) perfMode = PERF[saved];
+  } catch { /* storage blocked → default */ }
 
   const VERT = `
     attribute vec2 a_pos;
@@ -226,9 +242,9 @@
     .forEach((n) => { U[n] = gl.getUniformLocation(prog, n); });
 
   function resize() {
-    const d = DPR();
-    canvas.width = Math.floor(window.innerWidth * d);
-    canvas.height = Math.floor(window.innerHeight * d);
+    const d = perfMode.scale * (MOBILE ? 1.0 : Math.min(window.devicePixelRatio || 1, 1.3));
+    canvas.width = Math.max(2, Math.floor(window.innerWidth * d));
+    canvas.height = Math.max(2, Math.floor(window.innerHeight * d));
     canvas.style.width = window.innerWidth + "px";
     canvas.style.height = window.innerHeight + "px";
     gl.viewport(0, 0, canvas.width, canvas.height);
@@ -271,10 +287,17 @@
     },
     pulse() { glowT = Math.max(glowT, 1.5); },
     current() { return state; },
+    setPerf(mode) {
+      if (!PERF[mode]) return false;
+      perfMode = PERF[mode];
+      resize();          // apply the new render scale immediately
+      return true;
+    },
   };
   window.NovaFX = NovaFX;
 
   let running = true, last = performance.now(), t0 = last;
+  let lastDraw = 0;                       // frame-cap clock
   document.addEventListener("visibilitychange", () => {
     running = !document.hidden;
     if (running) { last = performance.now(); requestAnimationFrame(frame); }
@@ -285,6 +308,13 @@
     const t = (now - t0) / 1000;
     const dt = Math.min(now - last, 50);
     last = now;
+
+    // Frame cap: idle scenes are slow swirling — 30fps is visually identical
+    // and halves the GPU work. Full rate only when Nova is actually busy.
+    const active = state !== "idle" || pulse > 0 || rips[0].a > 0.01 || rips[1].a > 0.01 || Math.abs(glowT - 1) > 0.03;
+    const frameMin = 1000 / (active ? perfMode.fpsActive : perfMode.fpsIdle);
+    if (now - lastDraw < frameMin) { requestAnimationFrame(frame); return; }
+    lastDraw = now;
 
     glow += (glowT - glow) * 0.06;
     glowT += (1 - glowT) * 0.012;

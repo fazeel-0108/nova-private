@@ -571,6 +571,19 @@ button, input, textarea, select { font-family: inherit; }
 .msg.error .msg-body { color: var(--danger); }
 .msg.error .msg-meta { color: var(--danger); }
 .msg.sys .msg-body { color: var(--text-3); font-size: 13.5px; }
+.load-earlier {
+  align-self: center;
+  margin: 10px auto 4px;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.load-earlier:hover { color: var(--text-1); border-color: var(--text-3); }
 .chat-in .msg { animation: msg-in var(--t-slow) var(--ease) both; animation-delay: calc(var(--i, 0) * 30ms); }
 @keyframes msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .msg-out { opacity: 0; transform: translateX(40px); pointer-events: none; transition: opacity var(--t-med) ease, transform var(--t-med) ease; }

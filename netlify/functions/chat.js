@@ -48,36 +48,39 @@ async function callOpenAI(endpoint, key, model, messages, extra = {}, stream = f
 }
 
 // Ordered fallback chain per requested provider. Only verified providers.
+// NOTE: the model for a keyed hop is resolved from the PROVIDER name — the
+// previous pick() read .provider off a key string and sent model:undefined,
+// silently breaking every keyed provider into fallback.
 function chainFor(provider, model) {
   const k = envKeys();
   const poll = { provider: "pollinations", model: DEFAULT_MODEL.pollinations, endpoint: POLLINATIONS, keys: [""] };
-  const pick = (list) => (model && model !== "auto" ? [model] : [DEFAULT_MODEL[list[0].provider]]);
+  const modelFor = (prov) => (model && model !== "auto" ? model : DEFAULT_MODEL[prov]);
   if (provider === "groq") {
     return [
-      ...(k.groq.length ? [{ provider: "groq", model: pick(k.groq)[0], endpoint: EP.groq, keys: k.groq }] : []),
+      ...(k.groq.length ? [{ provider: "groq", model: modelFor("groq"), endpoint: EP.groq, keys: k.groq }] : []),
       poll,
     ];
   }
   if (provider === "openrouter") {
     return [
-      ...(k.openrouter.length ? [{ provider: "openrouter", model: pick(k.openrouter)[0], endpoint: EP.openrouter, keys: k.openrouter, extra: { "HTTP-Referer": "https://nova.local", "X-Title": "Nova AI Assistant" } }] : []),
+      ...(k.openrouter.length ? [{ provider: "openrouter", model: modelFor("openrouter"), endpoint: EP.openrouter, keys: k.openrouter, extra: { "HTTP-Referer": "https://nova.local", "X-Title": "Nova AI Assistant" } }] : []),
       poll,
     ];
   }
   if (provider === "tokenharbor") {
     return [
-      ...(k.tokenharbor.length ? [{ provider: "tokenharbor", model: pick(k.tokenharbor)[0], endpoint: EP.tokenharbor, keys: k.tokenharbor }] : []),
+      ...(k.tokenharbor.length ? [{ provider: "tokenharbor", model: modelFor("tokenharbor"), endpoint: EP.tokenharbor, keys: k.tokenharbor }] : []),
       poll,
     ];
   }
   if (provider === "cleanapis") {
     return [
-      ...(k.cleanapis.length ? [{ provider: "cleanapis", model: pick(k.cleanapis)[0], endpoint: EP.cleanapis, keys: k.cleanapis }] : []),
+      ...(k.cleanapis.length ? [{ provider: "cleanapis", model: modelFor("cleanapis"), endpoint: EP.cleanapis, keys: k.cleanapis }] : []),
       poll,
     ];
   }
   // "auto" + anything unknown: verified keyless brain first, then server keys.
-  return [poll, ...(k.groq.length ? [{ provider: "groq", model: pick(k.groq)[0], endpoint: EP.groq, keys: k.groq }] : [])];
+  return [poll, ...(k.groq.length ? [{ provider: "groq", model: modelFor("groq"), endpoint: EP.groq, keys: k.groq }] : [])];
 }
 
 async function handleChat(body) {

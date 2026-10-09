@@ -17,6 +17,20 @@
 #    Then the netlify function at /.netlify/functions/gate checks it.
 #    (Deploys via GitHub import only — drag-drop sites have no functions.)
 
+# App icons change rarely — cache hard on the CDN so updated PWA icon
+# fetches are fast, and version-bump sw.js when they do change.
+[[headers]]
+  for = "/icons/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
+# App icons change rarely — cache hard on the CDN so updated PWA icon
+# fetches are fast, and version-bump sw.js when they do change.
+[[headers]]
+  for = "/icons/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
 # Route /api/chat to the serverless function in netlify/functions/
 [[redirects]]
   from = "/api/chat"

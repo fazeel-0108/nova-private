@@ -88,45 +88,66 @@ async function handleChat(body) {
   const stream = !!body.stream;
   const chain = chainFor(requested, body.model);
   let lastErr = null;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   for (const hop of chain) {
     for (const key of hop.keys) {
-      try {
-        const upstream = await callOpenAI(hop.endpoint, key, hop.model, body.messages || [], hop.extra || {}, stream);
-        if (!upstream.ok) {
-          const data = await upstream.json().catch(() => null);
-          const msg = (data && data.error && (data.error.message || JSON.stringify(data.error))) || "HTTP " + upstream.status;
-          throw new Error(String(msg).slice(0, 180));
+      // The free Pollinations pool rate-limits bursts (HTTP 402/429/502/504).
+      // A single unlucky attempt would hand the user an error; retry this hop
+      // a couple of times with a short backoff before moving on. TOTAL extra
+      // delay is capped (~1.2s) so the serverless function stays fast.
+      const RETRIES = hop.provider === "pollinations" ? 2 : 0;
+      for (let attempt = 0; attempt <= RETRIES; attempt++) {
+        if (attempt) await sleep(400 + attempt * 400);
+        try {
+          const upstream = await callOpenAI(hop.endpoint, key, hop.model, body.messages || [], hop.extra || {}, stream);
+          if (!upstream.ok) {
+            const data = await upstream.json().catch(() => null);
+            const msg = (data && data.error && (data.error.message || JSON.stringify(data.error))) || "HTTP " + upstream.status;
+            // 402/429/5xx on the free pool → worth a retry; hard 401/403 → no point.
+            const retryable = upstream.status === 402 || upstream.status === 429 || upstream.status >= 500;
+            const err = new Error(String(msg).slice(0, 180));
+            err.retryable = retryable;
+            throw err;
+          }
+          const ct = upstream.headers.get("content-type") || "";
+          const meta = {
+            requestedProvider: requested,
+            requestedModel: body.model || null,
+            actualProvider: hop.provider,
+            actualModel: hop.model,
+            fallbackUsed: requested !== "auto" && hop.provider !== requested,
+          };
+          const metaH = { "X-Nova-Meta": Buffer.from(JSON.stringify(meta)).toString("base64") };
+          if (stream && ct.includes("event-stream") && upstream.body) {
+            // Token-by-token pass-through: real streaming, no buffering.
+            return new Response(upstream.body, {
+              status: 200,
+              headers: {
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+                ...metaH,
+              },
+            });
+          }
+          const data = await upstream.json();
+          if (data.error) throw new Error(String(data.error.message || JSON.stringify(data.error)).slice(0, 180));
+          return json({ ...data, meta }, 200, metaH);
+        } catch (e) {
+          lastErr = e.message;
+          // Non-retryable failure (bad key etc.) → no point burning this hop's retries.
+          if (e.retryable === false) break;
+          // Retryable failure on the LAST attempt of this hop → fall through.
         }
-        const ct = upstream.headers.get("content-type") || "";
-        const meta = {
-          requestedProvider: requested,
-          requestedModel: body.model || null,
-          actualProvider: hop.provider,
-          actualModel: hop.model,
-          fallbackUsed: requested !== "auto" && hop.provider !== requested,
-        };
-        const metaH = { "X-Nova-Meta": Buffer.from(JSON.stringify(meta)).toString("base64") };
-        if (stream && ct.includes("event-stream") && upstream.body) {
-          // Token-by-token pass-through: real streaming, no buffering.
-          return new Response(upstream.body, {
-            status: 200,
-            headers: {
-              "Content-Type": "text/event-stream; charset=utf-8",
-              "Cache-Control": "no-store",
-              "X-Accel-Buffering": "no",
-              ...metaH,
-            },
-          });
-        }
-        const data = await upstream.json();
-        if (data.error) throw new Error(String(data.error.message || JSON.stringify(data.error)).slice(0, 180));
-        return json({ ...data, meta }, 200, metaH);
-      } catch (e) {
-        lastErr = e.message;
       }
     }
   }
-  return json({ error: "all providers failed" + (lastErr ? ": " + lastErr : "") }, 502);
+  // Honest error: 402 from the free pool means the shared tier is out of
+  // credit/rate capacity right now — tell the userwhat happened + how to fix.
+  const friendly = /402|payment/i.test(lastErr || "")
+    ? "The free AI pool (Pollinations) reported 'Payment Required' (402) — its shared quota is exhausted or your IP is temporarily rate-limited. Notes/commands still work. Options: retry in a minute, or add a free key (Groq console.groq.com/keys or aistudio.google.com/apikey) in Settings so Nova stops depending on the shared pool."
+    : lastErr;
+  return json({ error: "all providers failed" + (friendly ? ": " + friendly : "") }, 502);
 }
 
 /* ---- /api/health: REAL probes, no secrets in the response ---- */

@@ -49,7 +49,11 @@ function originAllowed(request, env) {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  return { origin, allowed: list.includes(origin), list };
+  // The worker's own origin is always allowed: when the app is deployed as
+  // this project's assets, its calls are same-origin and the browser still
+  // sends an Origin header (which no allowlist should have to enumerate).
+  const selfOrigin = new URL(request.url).origin;
+  return { origin, allowed: origin === selfOrigin || list.includes(origin), list };
 }
 
 function corsHeaders(origin) {

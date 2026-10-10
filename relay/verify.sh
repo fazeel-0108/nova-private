@@ -106,10 +106,17 @@ echo "12) /api/sync — bad code is refused"
 C=$(code "$BASE/api/sync?code=ab")
 eq "bad code status" "$C" "400"
 
-echo "13) Static asset from the relay origin"
+echo "13) Static app from the same origin (when the app is deployed here)"
 C=$(code "$BASE/")
-eq "landing page status" "$C" "200"
-has "landing page is HTML" "$(cat "$TMP/body")" "Nova relay"
+if [ "$C" = "200" ]; then
+  BODY="$(cat "$TMP/body")"
+  has "root serves HTML" "$BODY" "<html"
+  if echo "$BODY" | grep -q "app.js"; then ok "root is the Nova app"; else echo "  note  root is the relay landing page (app not deployed to this origin)"; fi
+  C2=$(code "$BASE/app.js")
+  [ "$C2" = "200" ] && ok "app.js is served" || echo "  note  app.js not at this origin (status $C2) — expected if only the relay lives here"
+else
+  bad "root status" "200" "$C"
+fi
 
 rm -rf "$TMP"
 echo

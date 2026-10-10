@@ -4,5 +4,5 @@
   "modules": [
     { "name": "index.js", "type": "esm", "path": "./worker.js" }
   ],
-  "assetsDirectory": "../.site"
+  "assetsDirectory": "../site-dist"
 }

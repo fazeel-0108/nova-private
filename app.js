@@ -4458,6 +4458,8 @@ async function privateGate() {
     try {
       const probe = await fetch(apiUrl("/api/gate"), { method: "GET" });
       if (probe.status === 500) return true;      // NOVA_PASS not set → open site
+      const pj = await probe.json().catch(() => null);
+      if (pj && pj.configured === false) return true;   // relay has no passcode → nothing to unlock
     } catch { /* offline hosted: fall through to lock */ }
   }
   // show lock screen

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assembles the static Nova app into .site/ so it can be uploaded as the
+# Assembles the static Nova app into site-dist/ so it can be uploaded as the
 # assets of the relay Worker (the app and its server-side routes then share
 # one origin, which keeps every /api/* call same-origin).
 #
@@ -11,7 +11,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-OUT="$ROOT/.site"
+OUT="$ROOT/site-dist"
 rm -rf "$OUT"
 mkdir -p "$OUT/icons"
 
@@ -24,5 +24,5 @@ if ls "$OUT" | grep -Ei 'key|secret|token|\.env'; then
   exit 1
 fi
 
-echo "bundle ready in .site/"
+echo "bundle ready in site-dist/"
 find "$OUT" -type f | sed "s#$ROOT/##" | sort

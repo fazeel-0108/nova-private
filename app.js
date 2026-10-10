@@ -831,12 +831,29 @@ async function callAI(messages, onDelta) {
     // Server-relayed brains: keys live in Netlify env vars, never in the browser.
     // REAL streaming: /api/chat pipes the upstream SSE through token-by-token;
     // a plain JSON reply (older server or provider hiccup) is handled as fallback.
-    const res = await aiFetch(apiUrl("/api/chat"), {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider, model, messages, stream: true }),
-    });
+    let res;
+    try {
+      res = await aiFetch(apiUrl("/api/chat"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, model, messages, stream: true }),
+      });
+    } catch (netErr) {
+      // Relay unreachable (offline, bad DNS, host down) — the keyless free
+      // brain still answers, so the hosted app never dies with the relay.
+      onRelayDown();
+      return await callPollinationsDirect(messages, onDelta, false);
+    }
     if (!res.ok) {
       const j = await res.json().catch(() => null);
+      // 5xx means the relay or its host failed (a hosting outage), not that a
+      // provider refused the model — try the direct brain before giving up.
+      if (res.status >= 500) {
+        try {
+          const direct = await callPollinationsDirect(messages, onDelta, false);
+          onRelayDown();
+          return direct;
+        } catch { /* fall through to the relay's own error */ }
+      }
       throw new Error((j && j.error) || "relay failed");
     }
     const meta = parseNovaMeta(res.headers);
@@ -979,11 +996,40 @@ async function runWithTools(endpoint, headers, payload, onDelta, depth = 0) {
   return content;
 }
 
+/* Direct, keyless Pollinations call — the last resort when the relay (which
+   owns the provider keys) can't answer. Pollinations replies with
+   Access-Control-Allow-Origin: *, so the hosted page may call it straight from
+   the browser; it is the same keyless brain the relay falls back to server-side. */
+async function callPollinationsDirect(messages, onDelta, stream = false) {
+  const res = await aiFetch("https://text.pollinations.ai/openai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "openai", messages, stream }),
+  });
+  if (!res.ok) throw new Error(await readErr(res));
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) {
+    const j = await res.json();
+    const content = j?.choices?.[0]?.message?.content || "";
+    if (content) onDelta(content);
+    return content;
+  }
+  return await readSSE(res, (json) => json?.choices?.[0]?.delta?.content || "", onDelta);
+}
+
+/* The relay died mid-conversation — say so once a minute, not every turn. */
+let relayDownNotified = 0;
+function onRelayDown() {
+  const now = Date.now();
+  if (now - relayDownNotified < 60000) return;
+  relayDownNotified = now;
+  toast("Relay unreachable — answering with the direct free brain", "warn");
+}
+
 /* Free no-key AI (Pollinations). Transport logic:
    - Served over http(s) → use our own /api/chat proxy (server, Netlify or Vercel).
-     Pollinations blocks direct browser calls from web origins (Turnstile).
    - Opened as a file (file://) → call Pollinations directly; it allows Origin: null.
-   - Proxy unreachable → try direct once, then explain how to start the server. */
+   - Proxy unreachable → call Pollinations directly, then explain if even that fails. */
 async function callFreeAI(messages, onDelta, stream = true) {
   const attempt = async (url, allowStream) => {
     const res = await aiFetch(url, {
@@ -1003,13 +1049,13 @@ async function callFreeAI(messages, onDelta, stream = true) {
   };
 
   if (location.protocol === "file:") {
-    return attempt("https://text.pollinations.ai/openai", false);
+    return callPollinationsDirect(messages, onDelta, false);
   }
   try {
     return await attempt(apiUrl("/api/chat"), stream);
   } catch (proxyErr) {
     try {
-      return await attempt("https://text.pollinations.ai/openai", false);
+      return await callPollinationsDirect(messages, onDelta, false);
     } catch {
       throw new Error(apiBase()
         ? "Can't reach the AI relay — check your connection and retry."
@@ -1710,11 +1756,24 @@ async function callAIOnce(messages) {
 
   if (provider === "tokenharbor" || provider === "groq" || provider === "openrouter" || provider === "cleanapis" || provider === "auto") {
     // Server-relayed brains: keys live in Netlify env vars, never in the browser.
-    const j = await fetch(apiUrl("/api/chat"), {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider, model, messages, stream: false }),
-    }).then((r) => r.json()).catch(() => null);
-    if (!j || j.error) throw new Error((j && j.error) || "relay failed");
+    let j = null, status = 0;
+    try {
+      const r = await fetch(apiUrl("/api/chat"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, model, messages, stream: false }),
+      });
+      status = r.status;
+      j = await r.json().catch(() => null);
+    } catch { status = 0; }
+    if (!j || status >= 500) {
+      // Relay unreachable or its host is failing → the keyless direct brain.
+      try {
+        const direct = await callPollinationsDirect(messages, () => {}, false);
+        if (direct) { onRelayDown(); return direct; }
+      } catch { /* keep going and report the relay's own error */ }
+      throw new Error((j && j.error) || "relay failed");
+    }
+    if (j.error) throw new Error(j.error);
     if (j.fallbackUsed) toast(`Answered by ${j.actualProvider || "free fallback"} — ${provider} unavailable`, "warn");
     return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "";
   }
@@ -4573,7 +4632,7 @@ function init() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "openai", messages: [{ role: "user", content: "ping" }], stream: false }),
     }).then((r) => { if (!r.ok) throw 0; }).catch(() => {        setTimeout(() => toast(apiBase()
-          ? "⚠️ AI relay unreachable — check your connection. Nova Lite still works offline."
+          ? "⚠️ AI relay unreachable — Nova answers with the direct free brain for now."
           : "⚠️ AI relay unreachable — run `python serve.py` in the Nova folder, then use http://localhost:8080. Nova Lite still works offline.", "warn"), 1200);
     });
   }

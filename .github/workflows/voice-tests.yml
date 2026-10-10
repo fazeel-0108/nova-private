@@ -1,0 +1,40 @@
+name: Voice lifecycle tests
+
+# Runs the voice state-machine suite in headless Chromium against the real
+# app.js, so a regression fails the build instead of waiting for a manual page
+# visit. No microphone, no network, no provider keys involved.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app.js"
+      - "index.html"
+      - "tests/**"
+      - ".github/workflows/voice-tests.yml"
+  pull_request:
+    paths:
+      - "app.js"
+      - "index.html"
+      - "tests/**"
+  workflow_dispatch:
+
+jobs:
+  voice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Playwright + Chromium
+        run: |
+          set -euo pipefail
+          npm i --no-save playwright@1.47.2
+          npx playwright install --with-deps chromium
+
+      - name: Run the voice lifecycle suite
+        run: node tests/run-voice-tests.mjs

@@ -9,10 +9,13 @@
  */
 import http from "node:http";
 
-const mode = process.argv[2] || "ok";
+let mode = process.argv[2] || "ok";
 const PORT = 8098;
 
 const server = http.createServer((req, res) => {
+  // Live mode switch, so one process can exercise every gate branch.
+  const m = req.url.match(/^\/mode\/(ok|configured|down)$/);
+  if (m) { mode = m[1]; res.writeHead(200, { "Content-Type": "text/plain" }); res.end("mode=" + mode); return; }
   const cors = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",

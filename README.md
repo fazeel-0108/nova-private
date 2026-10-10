@@ -106,6 +106,12 @@ same-origin here (agent commands, sync, free AI proxy), so this is the mode for 
 > **Keys are server-side only.** The relay holds `GROQ_KEY`, `TOKENHARBOR_KEY_1/2`,
 > `OPENROUTER_KEY`, `CLEANAPIS_KEY` as Worker secrets — never in this repo, never in the browser.
 
+> **If the relay itself is down** (hosting outage, not a provider error), chat does not die with
+> it: `callAI`/`callAIOnce` fall back to the keyless Pollinations brain straight from the browser
+> (`callPollinationsDirect`, which sends `Access-Control-Allow-Origin: *`) and warn once a minute
+> with *“Relay unreachable — answering with the direct free brain”*. A 5xx or a dropped connection
+> triggers the fallback; a 4xx from the relay is reported as-is, since that is a real answer.
+
 ### Voice lifecycle tests (`tests/`)
 
 The voice state machine, microphone ownership and duplicate-event handling are

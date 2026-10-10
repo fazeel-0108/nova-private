@@ -9,10 +9,12 @@ const EP = {
   cleanapis: "https://cleanapis.com/v1/chat/completions",
 };
 const DEFAULT_MODEL = {
-  tokenharbor: "deepseek-v4.1-flash:free",
+  // Kept in sync with relay/worker.js: TokenHarbor + CleanAPIs serve the
+  // Claude line (the TokenHarbor ones need a balance — 402 without one).
+  tokenharbor: "claude-fable-5.1",
   groq: "openai/gpt-oss-20b",
   openrouter: "nvidia/nemotron-3-super-120b-a12b:free",
-  cleanapis: "deepseek-v4-flash-0731",
+  cleanapis: "claude-fable-5.1",
   pollinations: "openai",
 };
 

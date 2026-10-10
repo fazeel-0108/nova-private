@@ -106,6 +106,17 @@ same-origin here (agent commands, sync, free AI proxy), so this is the mode for 
 > **Keys are server-side only.** The relay holds `GROQ_KEY`, `TOKENHARBOR_KEY_1/2`,
 > `OPENROUTER_KEY`, `CLEANAPIS_KEY` as Worker secrets — never in this repo, never in the browser.
 
+### Token Harbor & CleanAPIs model set (2026-10-10)
+
+Both providers now offer the same three models, and nothing else:
+`claude-fable-5.1` (default), `claude-fable-5`, `claude-opus-5.5`. CleanAPIs serves all
+three (verified HTTP 200, 2.2–3.0 s). **Token Harbor answers HTTP 402 on all three** —
+those are paid models and that account's balance is $0, so Token Harbor requests fall back
+to the keyless brain until it is topped up (`claude-haiku-5.5:free` is the only free Claude
+there — verified 200 in 1.3 s). Models removed from the pickers are listed in
+`RETIRED_MODELS` in [app.js](app.js) so a saved choice migrates to the new default instead
+of 404ing.
+
 > **If the relay itself is down** (hosting outage, not a provider error), chat does not die with
 > it: `callAI`/`callAIOnce` fall back to the keyless Pollinations brain straight from the browser
 > (`callPollinationsDirect`, which sends `Access-Control-Allow-Origin: *`) and warn once a minute

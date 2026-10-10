@@ -235,20 +235,23 @@ const MODELS = {
     { id: "llama3.2", label: "llama3.2 — local (install via Ollama)" },
   ],
   tokenharbor: [
-    // Live-audited 2026-10-07. qwen3.8-flash:free returns HTTP 404 on both
-    // keys (retired) — removed from the picker; relay falls back honestly.
-    { id: "deepseek-v4.1-flash:free", label: "DeepSeek v4.1 Flash · FREE — default ⭐" },
-    { id: "mimo-v2.6-flash:free", label: "MiMo v2.6 Flash · FREE" },
-    { id: "mimo-v2.5:free", label: "MiMo v2.5 · FREE" },
-    { id: "deepseek-v4-flash:free", label: "DeepSeek v4 Flash · FREE" },
+    // 2026-10-10: picker replaced with the Claude line at the owner's request;
+    // the old free deepseek/mimo entries were retired to RETIRED_MODELS below.
+    // Money matters here: claude-fable-5.1 / claude-fable-5 / claude-opus-5.5
+    // are PAID models — this Token Harbor account is at $0 balance and they
+    // answer HTTP 402 until it is topped up (the relay then falls back to the
+    // keyless brain, so chat still replies). claude-haiku-5.5:free is the only
+    // Claude here that is free, and it verified 200 in 1.3s if you want it.
+    { id: "claude-fable-5.1", label: "Claude Fable 5.1 — default ⭐" },
+    { id: "claude-fable-5", label: "Claude Fable 5" },
+    { id: "claude-opus-5.5", label: "Claude Opus 5.5" },
   ],
   cleanapis: [
-    // Live-audited 2026-10-07 — all three verified HTTP 200 with real content.
-    // Picked to fill real gaps (5M tokens/mo plan, server-secure key only):
-    // 1M context for huge documents, cheap vision, built-in web search.
-    { id: "deepseek-v4-flash-0731", label: "DeepSeek V4 Flash — 1,000,000-token context ⭐" },
-    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna — sees images (vision) · cheap" },
-    { id: "kimi-k2.6", label: "Kimi K2.6 — built-in web search" },
+    // 2026-10-10: picker replaced with the same three Claude models at the
+    // owner's request. All three verified HTTP 200 on CleanAPIs (2.2–3.0s).
+    { id: "claude-fable-5.1", label: "Claude Fable 5.1 — default ⭐" },
+    { id: "claude-fable-5", label: "Claude Fable 5" },
+    { id: "claude-opus-5.5", label: "Claude Opus 5.5" },
   ],
   bai: [
     // NOTE: B.AI needs its own key; entries hidden from the picker until a key is set.
@@ -273,7 +276,13 @@ function getKey() {
    choice points at one, migrate to the provider's verified default — never
    leave a user stuck on a dead model. */
 const RETIRED_MODELS = {
-  tokenharbor: ["qwen3.8-flash:free"],
+  // Removed from the picker 2026-10-10 (replaced by the Claude line). Still
+  // working models at the time of removal, but a saved choice must migrate.
+  tokenharbor: [
+    "qwen3.8-flash:free", "deepseek-v4.1-flash:free", "mimo-v2.6-flash:free",
+    "mimo-v2.5:free", "deepseek-v4-flash:free",
+  ],
+  cleanapis: ["deepseek-v4-flash-0731", "gpt-5.6-luna", "kimi-k2.6"],
   openrouter: ["inclusionai/ling-3.0-flash-fin:free"],
 };
 if (RETIRED_MODELS[state.provider] && RETIRED_MODELS[state.provider].includes(state.model)) {

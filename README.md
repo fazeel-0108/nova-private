@@ -106,6 +106,21 @@ same-origin here (agent commands, sync, free AI proxy), so this is the mode for 
 > **Keys are server-side only.** The relay holds `GROQ_KEY`, `TOKENHARBOR_KEY_1/2`,
 > `OPENROUTER_KEY`, `CLEANAPIS_KEY` as Worker secrets — never in this repo, never in the browser.
 
+### Voice lifecycle tests (`tests/`)
+
+The voice state machine, microphone ownership and duplicate-event handling are
+tested against the real `app.js` with deterministic platform fakes
+(SpeechRecognition, TTS, getUserMedia) — no live mic or network needed:
+
+```bash
+python -m http.server 8097          # from the repo root
+# then open http://127.0.0.1:8097/tests/voice-lifecycle.html
+```
+
+The page prints `N/total passed` and sets `window.__voiceTestSummary`. Adding
+`?app=../site-dist/old-app.js` runs the same suite against a previous build, to
+confirm the tests really catch the regressions they claim to cover.
+
 ### Relay (`relay/`)
 
 ```bash

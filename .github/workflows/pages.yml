@@ -1,0 +1,64 @@
+name: Deploy Nova to GitHub Pages
+
+# Publishes only the static app bundle (index.html, app.js, bgfx.js,
+# styles.css, sw.js, manifest, icons). The laptop agent, the relay Worker
+# source, the Android wrapper and any local key files are never published.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "index.html"
+      - "app.js"
+      - "bgfx.js"
+      - "styles.css"
+      - "sw.js"
+      - "manifest.webmanifest"
+      - "icons/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble the static bundle
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp index.html app.js bgfx.js styles.css sw.js manifest.webmanifest _site/
+          cp -r icons _site/icons
+          # Never publish anything secret-shaped, even if it ever appears here.
+          if ls _site | grep -Ei 'key|secret|token|\.env' ; then
+            echo "Refusing to publish: a secret-looking file is present in _site"; exit 1
+          fi
+          find _site -type f | sort
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

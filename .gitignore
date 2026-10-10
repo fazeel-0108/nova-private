@@ -25,3 +25,10 @@ nova-keys-netlify.txt
 # Nova Agent local credential + action log (never publish)
 nova_agent.token
 nova_agent_log.json
+
+# Relay secrets split from the local key file (never publish)
+.secrets/
+relay/.dev.vars
+relay/wrangler-dev.log
+.relay-state/
+relay/.wrangler/

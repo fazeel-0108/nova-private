@@ -20,7 +20,7 @@ One app that installs on your **laptop**, **Android**, and **iPhone** — with t
 
 ## 🔑 AI brains: works with NO key, or with top models
 
-**⚡ No API key? Nova still works!** Out of the box it uses the **🆓 Free AI** provider (GPT-OSS 20B via Pollinations — no key, no signup) for **any** question, plus **Nova Lite** — a built-in offline brain — and ALL device commands (notes, math, WhatsApp, email, open apps) work offline. Free AI runs through the bundled proxy (`serve.py` locally, `netlify/` or `api/` when published).
+**⚡ No API key? Nova still works!** Out of the box it uses the **🆓 Free AI** provider (GPT-OSS 20B via Pollinations — no key, no signup) for **any** question, plus **Nova Lite** — a built-in offline brain — and ALL device commands (notes, math, WhatsApp, email, open apps) work offline. Free AI runs through the bundled proxy (`serve.py` locally, the `relay/` Worker when published).
 
 **Want the top models (free or paid)?** Get a key — takes 1 minute:
 
@@ -88,16 +88,38 @@ Your key is stored **only on your device** (localStorage). It never leaves your 
 
 Pick ONE:
 
-**A) Netlify (easiest, free AI works out of the box)**
-1. Go to [app.netlify.com](https://app.netlify.com) → sign up free → **Add new site → Import an existing project** (or drag-and-drop the folder with the Netlify desktop/dashboard option)
-2. Netlify auto-reads `netlify.toml` and wires up `/api/chat` (the free-AI proxy) automatically
-3. Open your live URL on your phone → **Add to Home screen**. Done — it's an app now.
+**A) GitHub Pages + the Nova relay (what this repo uses)**
+1. Push to `main`. `.github/workflows/pages.yml` publishes the static bundle to GitHub Pages.
+2. In the repo: **Settings → Pages → Source: GitHub Actions** (once). The site lands at
+   `https://<user>.github.io/<repo>/`.
+3. The app's server-side routes (`/api/chat`, `/api/sync`, `/api/gate`) are served by the
+   **Nova relay** Worker in `relay/` — see *Relay* below. Without it, the page still loads
+   but AI falls back to Nova Lite.
+4. Open the URL on your phone → **Add to Home screen**. Done — it's an app now.
 
-**B) Vercel** — `npm i -g vercel` → run `vercel` in this folder → deploy. The `api/chat.js` function makes the free AI work automatically.
-**C) GitHub Pages** — push this folder to a repo → Settings → Pages → deploy from branch. *(Note: GitHub Pages can't run the `/api/chat` proxy, so use provider **Gemini free key** or **OpenRouter** in Settings there — or keep using Nova Lite.)*
-**D) Cloudflare Pages** — [pages.cloudflare.com](https://pages.cloudflare.com) → upload the folder. *(Same note as GitHub Pages.)*
+**B) Local laptop server** — `python serve.py` → open `http://localhost:8080`. Everything is
+same-origin here (agent commands, sync, free AI proxy), so this is the mode for device control.
+**C) Vercel** — `npm i -g vercel` → `vercel`. The `api/chat.js` function is a standalone relay.
 
-> With Netlify or Vercel, everything works with **zero keys**: the 🆓 Free AI provider streams real AI answers through your site's own `/api/chat` proxy.
+> **Keys are server-side only.** The relay holds `GROQ_KEY`, `TOKENHARBOR_KEY_1/2`,
+> `OPENROUTER_KEY`, `CLEANAPIS_KEY` as Worker secrets — never in this repo, never in the browser.
+
+### Relay (`relay/`)
+
+```bash
+cd relay && npx wrangler dev --local --port 8788   # run it locally
+bash relay/verify.sh http://127.0.0.1:8788 <passcode>   # 24 checks: chat, streaming, gate, sync, CORS
+bash relay/verify.sh https://<your-relay-host> <passcode>  # same checks against a deployment
+```
+
+Routes: `POST /api/chat` (keys + retry/backoff on 402/429/5xx), `GET /api/health`,
+`GET|POST /api/sync` (D1), `GET|POST /api/gate` (D1 device registry).
+Secrets: the five provider keys above, plus `NOVA_PASS` / optional `NOVA_HINT` for the passcode gate.
+
+> **Known limits of the hosted mode.** `/api/act`, `/api/ping` and `/api/ollama/*` live on the
+> laptop agent only, so device control works when you open Nova from `serve.py` (same origin),
+> not from the hosted page. Browsers also block plain-`http` LAN calls made from an `https` page.
+> Sync uses whichever backend the page was loaded from — pair devices on the same one.
 
 All of these give you free HTTPS, which unlocks: install prompts on Android/desktop, microphone on iPhone, and background offline caching.
 
@@ -118,7 +140,8 @@ sw.js                 Service worker (offline shell, network-first updates)
 manifest.webmanifest  Install metadata (name, icons, shortcuts)
 serve.py              Local server + free-AI proxy (shows LAN URL for phone testing)
 api/chat.js           Vercel function — free-AI proxy when published on Vercel
-netlify/              Netlify function + config — free-AI proxy on Netlify
+relay/                Cloudflare Worker relay + local config + verify.sh (server-side routes)
+.github/workflows/    GitHub Actions (Pages deploy, Android APK build)
 make_icons.py         Regenerates the app icons (python make_icons.py)
 icons/                App icons + SVG source
 ```
@@ -127,8 +150,9 @@ icons/                App icons + SVG source
 Everything (chats, notes, flashcards, API key, settings) lives in your browser storage on each device. Nothing is sent to any server except your chosen AI provider. **Erase all data** in Settings wipes a device clean.
 
 ## 🛠 Troubleshooting
-- **Free AI says 402/429 or "rate limited"** → the shared free pool is busy; try again in a minute, switch provider to **Nova Lite**, or add a free Gemini key. Heavy use deserves your own (free) Gemini key.
-- **Published on GitHub Pages/Cloudflare and Free AI fails** → those hosts can't run the proxy; use Nova Lite or a free Gemini key there.
+- **Free AI says 402/429 or "rate limited"** → the shared free pool is busy. The relay now retries twice before reporting it; if it still fails, wait a minute or pick a keyed brain (Groq / Token Harbor / OpenRouter / CleanAPIS) whose key lives on the relay.
+- **Hosted page: every brain says "relay failed"** → the relay is unreachable or the origin isn't allowed (`APP_ORIGINS`). Check `https://<relay-host>/api/health`.
+- **Device commands (laptop status, open app, cleanup) do nothing on the hosted page** → expected: the agent routes only exist on the laptop. Open Nova from `python serve.py` (or the APK on the same Wi-Fi) for those.
 - **Mic doesn't work** → must be HTTPS (published) or localhost; check browser mic permission; use Chrome/Edge.
 - **App didn't update after I changed files** → hard-refresh once (Ctrl+Shift+R); the service worker refreshes itself after that.
 - **WhatsApp/Gmail didn't open** → allow pop-ups for the site (browsers block the first one sometimes).

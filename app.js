@@ -18,6 +18,26 @@ const LS = {
   set(key, val) { localStorage.setItem(key, JSON.stringify(val)); },
 };
 
+/* ---------------- Where the server routes live ----------------
+   Nova is a static bundle; its server-side routes (AI keys, cross-device
+   sync, the passcode gate) live on the Nova relay Worker. When this page is
+   served by its own server — python serve.py on the laptop, or wrangler dev —
+   those routes are same-origin. On a static host (GitHub Pages) they are
+   fetched from the relay. The laptop agent (/api/act, /api/ping,
+   /api/ollama/*) only ever exists on the laptop itself, so those calls always
+   stay same-origin and fail honestly when the agent isn't running. */
+const RELAY_ORIGIN = "https://site-b9ba42016ccb480083628abb2dfa4a74.freebuff.page";
+function apiBase() {
+  const override = LS.get("nova.relay", "");
+  if (override) return String(override).replace(/\/+$/, "");
+  if (location.protocol === "file:") return RELAY_ORIGIN;
+  const host = location.hostname;
+  if (/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(host) || /\.local$/i.test(host)) return "";
+  try { if (host === new URL(RELAY_ORIGIN).hostname) return ""; } catch { /* bad constant */ }
+  return RELAY_ORIGIN;
+}
+function apiUrl(path) { return apiBase() + path; }
+
 const state = {
   provider: LS.get("nova.provider", "auto"),          // default brain: Nova Auto (server-routed)
   model: LS.get("nova.model", "auto"),
@@ -807,7 +827,7 @@ async function callAI(messages, onDelta) {
     // Server-relayed brains: keys live in Netlify env vars, never in the browser.
     // REAL streaming: /api/chat pipes the upstream SSE through token-by-token;
     // a plain JSON reply (older server or provider hiccup) is handled as fallback.
-    const res = await aiFetch("/api/chat", {
+    const res = await aiFetch(apiUrl("/api/chat"), {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ provider, model, messages, stream: true }),
     });
@@ -982,12 +1002,14 @@ async function callFreeAI(messages, onDelta, stream = true) {
     return attempt("https://text.pollinations.ai/openai", false);
   }
   try {
-    return await attempt("/api/chat", stream);
+    return await attempt(apiUrl("/api/chat"), stream);
   } catch (proxyErr) {
     try {
       return await attempt("https://text.pollinations.ai/openai", false);
     } catch {
-      throw new Error("Can't reach the AI relay — the local server isn't running. Open a terminal in the Nova folder and run: python serve.py — then open http://localhost:8080");
+      throw new Error(apiBase()
+        ? "Can't reach the AI relay — check your connection and retry."
+        : "Can't reach the AI relay — the local server isn't running. Open a terminal in the Nova folder and run: python serve.py — then open http://localhost:8080");
     }
   }
 }
@@ -1684,7 +1706,7 @@ async function callAIOnce(messages) {
 
   if (provider === "tokenharbor" || provider === "groq" || provider === "openrouter" || provider === "cleanapis" || provider === "auto") {
     // Server-relayed brains: keys live in Netlify env vars, never in the browser.
-    const j = await fetch("/api/chat", {
+    const j = await fetch(apiUrl("/api/chat"), {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ provider, model, messages, stream: false }),
     }).then((r) => r.json()).catch(() => null);
@@ -1693,7 +1715,7 @@ async function callAIOnce(messages) {
     return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "";
   }
   if (provider === "pollinations") {
-    const res = await fetch("/api/chat", {
+    const res = await fetch(apiUrl("/api/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: model || "openai", messages, stream: false }),
@@ -3393,7 +3415,7 @@ async function refreshDevices() {
   const token = LS.get("nova.lockToken", "");
   if (!token) { box.innerHTML = `<div class="dev-row muted">unlock first</div>`; return; }
   try {
-    const r = await fetch("/api/gate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, listAll: 1 }) });
+    const r = await fetch(apiUrl("/api/gate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, listAll: 1 }) });
     const j = await r.json();
     if (!j.ok || !j.devices?.length) { box.innerHTML = `<div class="dev-row muted">no devices yet</div>`; return; }
     const myId = LS.get("nova.devId", "");
@@ -3409,7 +3431,7 @@ async function refreshDevices() {
       const btn = document.createElement("button");
       btn.className = "dev-revoke"; btn.textContent = "✕"; btn.title = "Remove access (device must log in again)";
       btn.onclick = async () => {
-        await fetch("/api/gate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, revoke: d.id }) });
+        await fetch(apiUrl("/api/gate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, revoke: d.id }) });
         if (d.id === myId) { LS.set("nova.lockToken", ""); location.reload(); }
         else { toast("Access removed — that device must log in again", "ok"); refreshDevices(); }
       };
@@ -3663,7 +3685,7 @@ function healthDot(provider) {
 async function refreshHealth() {
   if (HEALTH && Date.now() - HEALTH_AT < 120000) return;
   try {
-    const r = await fetch("/api/health");
+    const r = await fetch(apiUrl("/api/health"));
     HEALTH = await r.json();
     HEALTH_AT = Date.now();
     if (el.modelDD && !el.modelDD.classList.contains("hidden")) renderModelMenu();
@@ -4092,6 +4114,8 @@ function wire() {
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
+  // Relay reachability, once per load, so a dead relay surfaces clearly.
+  if (apiBase()) { fetch(apiUrl("/api/health"), { cache: "no-store" }).catch(() => {}); }
 
   // Auto-sync on start & when the tab regains focus (paired devices only)
   if (state.syncCode) {
@@ -4301,14 +4325,14 @@ async function doSync(pushOnly = false) {
   if (!state.syncCode) { toast("Pair a code first (Settings → Sync)", "warn"); return; }
   const dev = deviceName();
   try {
-    const res = await fetch("/api/sync?code=" + encodeURIComponent(state.syncCode));
+    const res = await fetch(apiUrl("/api/sync?code=" + encodeURIComponent(state.syncCode)));
     if (!res.ok) throw new Error("sync fetch failed");
     const remote = await res.json();
     applySynced(remote.data);
     if (!pushOnly) toast("⇅ Synced" + (remote.rev ? ` (rev ${remote.rev})` : ""), "ok");
   } catch { /* pull failed; still push below */ }
   try {
-    const res = await fetch("/api/sync", {
+    const res = await fetch(apiUrl("/api/sync"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: state.syncCode, device: dev, payload: syncPayload() }),
@@ -4321,7 +4345,7 @@ async function doSync(pushOnly = false) {
     const btn = document.getElementById("btn-sync-now");
     if (btn) { btn.textContent = "✓ Synced"; setTimeout(() => (btn.textContent = "⇅ Sync now"), 1600); }
   } catch {
-    toast("Sync failed — is the server running? (python serve.py)", "err");
+    toast("Sync failed — sync store unreachable", "err");
   }
 }
 
@@ -4343,15 +4367,17 @@ let lastSSEEventAt = 0;
    Falls back to 4s polling if SSE is unavailable. */
 function openSyncStream() {
   if (!state.syncCode || typeof EventSource === "undefined") return;
+  // The relay has no SSE events route — polling is the transport there.
+  if (apiBase()) { if (syncSSE) { syncSSE.close(); syncSSE = null; } return; }
   if (syncSSE) { syncSSE.close(); syncSSE = null; }
   try {
-    syncSSE = new EventSource("/api/sync/events?code=" + encodeURIComponent(state.syncCode));
+    syncSSE = new EventSource(apiUrl("/api/sync/events?code=" + encodeURIComponent(state.syncCode)));
     syncSSE.addEventListener("rev", (e) => {
       try {
         const { rev } = JSON.parse(e.data);
         lastSSEEventAt = Date.now();
         if (lastSeenRev !== -1 && rev !== lastSeenRev) {
-          fetch("/api/sync?code=" + encodeURIComponent(state.syncCode)).then((r) => r.json()).then((remote) => {
+          fetch(apiUrl("/api/sync?code=" + encodeURIComponent(state.syncCode))).then((r) => r.json()).then((remote) => {
             if (remote.data) applySynced(remote.data);
           }).catch(() => {});
         }
@@ -4367,7 +4393,7 @@ async function watchSync() {
   // SSE connected and recently alive → it already pushed us everything.
   if (syncSSE && syncSSE.readyState === 1 && Date.now() - lastSSEEventAt < 15000) return;
   try {
-    const res = await fetch("/api/sync?code=" + encodeURIComponent(state.syncCode));
+    const res = await fetch(apiUrl("/api/sync?code=" + encodeURIComponent(state.syncCode)));
     if (!res.ok) return;
     const remote = await res.json();
     if (lastSeenRev === -1) { lastSeenRev = remote.rev || 0; return; }
@@ -4416,7 +4442,7 @@ async function privateGate() {
   const token = LS.get("nova.lockToken", "");
   if (token) {
     try {
-      const r = await fetch("/api/gate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+      const r = await fetch(apiUrl("/api/gate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
       if (r.status === 500) return true;          // gate not configured → fail open
       if (r.ok) {
         const j = await r.json();
@@ -4426,7 +4452,7 @@ async function privateGate() {
   } else {
     // no token yet — is the gate even configured?
     try {
-      const probe = await fetch("/api/gate", { method: "GET" });
+      const probe = await fetch(apiUrl("/api/gate"), { method: "GET" });
       if (probe.status === 500) return true;      // NOVA_PASS not set → open site
     } catch { /* offline hosted: fall through to lock */ }
   }
@@ -4437,18 +4463,18 @@ async function privateGate() {
   if (!lock) return true;
   lock.classList.remove("hidden");
   try {
-    const r = await fetch("/api/gate", { method: "GET" });
+    const r = await fetch(apiUrl("/api/gate"), { method: "GET" });
     const j = await r.json();
     if (j.hint) hint.textContent = "Hint: " + j.hint;
   } catch { /* hint optional */ }
   const attempt = async () => {
     err.textContent = "";
     try {
-      const r = await fetch("/api/gate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pass: inp.value }) });
+      const r = await fetch(apiUrl("/api/gate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pass: inp.value }) });
       if (r.status === 500) {
         // Gate not configured — don't trap the user; open with a hint.
         lock.classList.add("hidden");
-        toast("Private gate not configured — set NOVA_PASS in Netlify to lock this site", "warn");
+        toast("Private gate not configured — set NOVA_PASS in the relay's secrets to lock this site", "warn");
         init();
         return;
       }
@@ -4484,12 +4510,13 @@ function init() {
   el.messages.classList.add("chat-in");
   // Wake/check the AI relay once so problems surface with clear guidance, not mid-chat.
   if (location.protocol !== "file:" && state.provider === "pollinations") {
-    fetch("/api/chat", {
+    fetch(apiUrl("/api/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "openai", messages: [{ role: "user", content: "ping" }], stream: false }),
-    }).then((r) => { if (!r.ok) throw 0; }).catch(() => {
-      setTimeout(() => toast("⚠️ AI relay unreachable — run `python serve.py` in the Nova folder, then use http://localhost:8080. Nova Lite still works offline.", "warn"), 1200);
+    }).then((r) => { if (!r.ok) throw 0; }).catch(() => {        setTimeout(() => toast(apiBase()
+          ? "⚠️ AI relay unreachable — check your connection. Nova Lite still works offline."
+          : "⚠️ AI relay unreachable — run `python serve.py` in the Nova folder, then use http://localhost:8080. Nova Lite still works offline.", "warn"), 1200);
     });
   }
   applyTheme();

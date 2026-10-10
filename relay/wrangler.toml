@@ -1,0 +1,14 @@
+# Local development only (wrangler dev). Deployment to Freebuff Sites uses
+# relay/site.json instead — these are separate paths on purpose.
+name = "nova-relay"
+main = "worker.js"
+compatibility_date = "2026-10-10"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nova-relay-dev"
+database_id = "local-dev-only"

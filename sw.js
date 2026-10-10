@@ -1,6 +1,6 @@
 /* Nova service worker — offline app shell + graceful network handling.
    API calls are never cached; the app queues them while offline. */
-const CACHE = "nova-v31";
+const CACHE = "nova-v32";
 const SHELL = [
   "./",
   "./index.html",
@@ -38,7 +38,8 @@ self.addEventListener("fetch", (event) => {
   // AI providers: network only; a failed fetch surfaces as "offline" in the app.
   if (url.hostname.includes("openai.com") || url.hostname.includes("openrouter.ai") ||
       url.hostname.includes("googleapis.com") || url.hostname.includes("anthropic.com") ||
-      url.hostname.includes("tokenharbor.ai") || url.hostname.includes("api.b.ai")) {
+      url.hostname.includes("tokenharbor.ai") || url.hostname.includes("api.b.ai") ||
+      url.hostname.includes("freebuff.page") || url.hostname.includes("pollinations")) {
     return;
   }
 

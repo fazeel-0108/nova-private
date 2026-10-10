@@ -2486,7 +2486,32 @@ function userBargeIn() {
   ttsCooldownRearm();
 }
 
+/* Manual mic owns the microphone while its session lasts. Hands-free yields
+   it (and is handed back on close) — one microphone, one owner, always. */
+let handsFreeYielded = false;
+function yieldHandsFreeForManual() {
+  if (!state.listening) { handsFreeYielded = false; return; }
+  handsFreeYielded = true;       // remember it so the wake loop can be restored
+  stopListening();               // single choke point: banner + recognizer + wake lock
+  voicePhase("OPENING");
+}
+function resumeHandsFreeIfYielded() {
+  if (!handsFreeYielded) return;
+  handsFreeYielded = false;
+  if (state.handsFree && !state.listening && !voiceChat) {
+    try { toggleHandsFree(); } catch { /* needs SR/permission */ }
+  }
+}
+
 async function openJarvis() {
+  // Re-entry: a second tap re-arms the live session instead of stacking a
+  // second overlay/session on top of the first.
+  if (jarvisOverlayOpen && voiceChat) {
+    if (!recogActive) { voicePhase("LISTENING"); listenOnce(); }
+    return;
+  }
+  // Hands-free must hand the microphone over before we request it ourselves.
+  yieldHandsFreeForManual();
   jEl.overlay = jEl.overlay || j$("jarvis");
   jEl.viz = jEl.viz || j$("jarvis-viz");
   jEl.state = jEl.state || j$("jarvis-state");
@@ -2543,6 +2568,7 @@ function closeJarvis() {
   micGate(false);
   voicePhase("IDLE");
   setVoiceState("idle");
+  resumeHandsFreeIfYielded();
 }
 
 /* The existing voice loop runs inside the overlay; mirror its phases. */
@@ -2982,7 +3008,10 @@ async function startMicDictation() {
    the moment a new session begins (SPEAKING, closeJarvis, teardown). */
 async function listenOnce() {
   if (!voiceChat || state.busy || voiceThinking) return;
-  if (recogActive) return;                       // exactly ONE recognizer, ever
+  /* Exactly one recognizer, ever — but a LIVE one (the hands-free wake loop)
+     must YIELD here, never block the manual session. Bailing out while
+     recogActive was true is why the mic button looked dead with hands-free on. */
+  if (recogActive) stopRecog();
   const my = vSession();
   return new Promise((resolve) => {
     stopListening();                             // hands-free yields the mic
@@ -3013,6 +3042,7 @@ async function listenOnce() {
       recogActive = false;                               // recognizer is done by definition
       if (!alive()) return resolve();                    // session closed → do NOTHING
       const said = finalText.trim();
+      if (said) setHeard(said);                          // final transcript persists
       if (!said) {
         if (VoiceFSM.ttsActive || state.speaking) return resolve();  // TTS owns the mic
         setWaveText(VOICE_LABELS.LISTENING);
@@ -3086,6 +3116,8 @@ function endVoiceChat(msg) {
   el.mic.classList.remove("listening");
   stopListening();
   if (msg) toast(msg);
+  /* Hands-free is handed back by closeJarvis only — resuming here would
+     re-open the mic on error paths (blocked mic, device unplugged). */
 }
 
 /* Hands-free: continuous listening for "<Nickname>, <command>".
@@ -3128,15 +3160,25 @@ function startHandsFreeRecog(nick) {
       const m = heard.match(rx);
       if (!m) continue;
       const cmd = m[1].trim();
-      addBubble("user", `🎙️ “${e.results[i][0].transcript.trim()}”`);
+      const raw = e.results[i][0].transcript.trim();
+      /* ONE wake event → at most ONE action. The claim is atomic: a repeated
+         final result (Chrome re-delivery) hits the duplicate guard, and the
+         wake-only branch is guarded too — it used to be un-guarded, which is
+         how a repeated event produced a second activation and a second beep. */
+      if (voiceCommandDuplicate(cmd.length > 1 ? cmd : "__wake_only__")) {
+        setHeard(raw);       // keep the live transcript, take no action
+        continue;
+      }
+      setHeard(raw);         // final transcript stays visible while Nova answers
+      addBubble("user", `🎙️ “${raw}”`);
       if (cmd.length <= 1) {
         const greeting = `Yes ${state.nickname === "Nova" ? "sir" : ""}, how can I help you today?`.replace(/\s+/g, " ");
         vNextSession(); stopRecog(); micGate(false);         // mic OFF before Nova speaks
         speakNow(greeting);
         addBubble("ai", `✦ ${greeting}`);
         voicePhase("SPEAKING");
+        return;                       // one accepted wake per event, no double beep
       } else {
-        if (voiceCommandDuplicate(cmd)) continue;            // run once, ever
         vNextSession(); stopRecog(); micGate(false);         // mic OFF before processing
         voiceThinking = true;
         voicePhase("PROCESSING");
@@ -3147,6 +3189,7 @@ function startHandsFreeRecog(nick) {
             if (VoiceFSM.ttsActive || state.speaking) return; // speak() owns the re-arm
             ttsCooldownRearm();                               // nothing was spoken → re-arm
           });
+        return;                       // one accepted wake per event
       }
     }
   };

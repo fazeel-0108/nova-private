@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nova — voice lifecycle tests</title>
+  <style>
+    body { margin: 0; background: #0b0f1a; color: #e8eefc; font: 14px/1.5 ui-monospace, monospace; padding: 24px; }
+    #voice-test-results h1 { font-size: 16px; margin: 0 0 8px; }
+    #voice-test-results ol { padding-left: 20px; }
+    #voice-test-results li { margin: 3px 0; }
+    .ok { color: #6ee7a8; }
+    .no { color: #ff9d9d; }
+    .good { color: #6ee7a8; } .bad { color: #ff9d9d; font-weight: 700; }
+    #boot { color: #9fb0d0; }
+  </style>
+</head>
+<body>
+  <p id="boot">Booting the real app against the test fakes…</p>
+  <script src="voice-stubs.js"></script>
+  <script>
+    /* Load the real index.html DOM (its own <script> tags stripped) and then
+       the real app.js, so the suite exercises production code paths. */
+    (async function boot() {
+      const boot = document.getElementById("boot");
+      try {
+        const html = await window.__realFetch("../index.html").then((r) => r.text());
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        doc.querySelectorAll("script").forEach((s) => s.remove());
+
+        const root = document.createElement("div");
+        root.id = "nova-root";
+        root.innerHTML = doc.body.innerHTML;
+        document.body.appendChild(root);
+
+        await new Promise((res, rej) => {
+          const s = document.createElement("script");
+          s.src = "voice-lifecycle.js";   // same directory as this page
+          s.onload = res;
+          s.onerror = rej;
+          document.head.appendChild(s);
+        });
+
+        // ?app=../site-dist/old-app.js lets the same suite run against a
+        // previous build to prove the tests actually catch the regressions.
+        const appSrc = new URLSearchParams(location.search).get("app") || "../app.js";
+        await new Promise((res, rej) => {
+          const s = document.createElement("script");
+          s.src = appSrc;
+          s.onload = res;
+          s.onerror = rej;
+          document.head.appendChild(s);
+        });
+
+        // Wait for init() (privateGate → init on loopback), not just file load.
+        for (let i = 0; i < 60 && !document.getElementById("brand-mark").innerHTML; i++) await new Promise((r) => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 150));
+
+        boot.textContent = "App booted — running voice lifecycle tests…";
+        const summary = await window.__runVoiceLifecycleTests();
+        boot.textContent = `Done: ${summary.passed}/${summary.total} passed` + (summary.failed.length ? ` — FAILED: ${summary.failed.join(" | ")}` : "");
+        window.__voiceTestDone = true;
+      } catch (err) {
+        boot.textContent = "HARNESS ERROR: " + ((err && err.stack) || err);
+        window.__voiceTestDone = true;
+        window.__voiceTestSummary = { total: 0, passed: 0, failed: ["harness error: " + ((err && err.message) || err)] };
+      }
+    })();
+  </script>
+</body>
+</html>

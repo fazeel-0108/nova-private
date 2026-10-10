@@ -4,19 +4,22 @@ name: Deploy Nova to GitHub Pages
 # styles.css, sw.js, manifest, icons). The laptop agent, the relay Worker
 # source, the Android wrapper and any local key files are never published.
 
+# Manual only while hosting lives on the Cloudflare project: this repo is
+# PRIVATE, and GitHub Pages needs a public repo or a paid GitHub plan. Flip the
+# push trigger back on after making the repo public or upgrading to Pro.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "index.html"
-      - "app.js"
-      - "bgfx.js"
-      - "styles.css"
-      - "sw.js"
-      - "manifest.webmanifest"
-      - "icons/**"
-      - ".github/workflows/pages.yml"
   workflow_dispatch:
+    # push:
+    #   branches: [main]
+    #   paths:
+    #     - "index.html"
+    #     - "app.js"
+    #     - "bgfx.js"
+    #     - "styles.css"
+    #     - "sw.js"
+    #     - "manifest.webmanifest"
+    #     - "icons/**"
+    #     - ".github/workflows/pages.yml"
 
 permissions:
   contents: read

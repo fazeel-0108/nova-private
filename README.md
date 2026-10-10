@@ -88,14 +88,16 @@ Your key is stored **only on your device** (localStorage). It never leaves your 
 
 Pick ONE:
 
-**A) GitHub Pages + the Nova relay (what this repo uses)**
-1. Push to `main`. `.github/workflows/pages.yml` publishes the static bundle to GitHub Pages.
-2. In the repo: **Settings → Pages → Source: GitHub Actions** (once). The site lands at
-   `https://<user>.github.io/<repo>/`.
-3. The app's server-side routes (`/api/chat`, `/api/sync`, `/api/gate`) are served by the
-   **Nova relay** Worker in `relay/` — see *Relay* below. Without it, the page still loads
-   but AI falls back to Nova Lite.
-4. Open the URL on your phone → **Add to Home screen**. Done — it's an app now.
+**A) Cloudflare project hosting the app + its relay (what this repo uses)**
+1. `bash relay/build-site.sh` assembles the static bundle into `.site/`.
+2. Deploy it together with the Worker using `relay/deploy-app.json` (Freebuff Sites).
+   The app and `/api/*` then share one origin, so every call is same-origin.
+3. Open the URL on your phone → **Add to Home screen**. Done — it's an app now.
+
+**A2) GitHub Pages as the frontend** — the same bundle can be served there instead;
+`.github/workflows/pages.yml` is committed but **manual-trigger only**, because Pages on a
+*private* repo needs a paid GitHub plan. Make the repo public (or upgrade to Pro), re-enable the
+`push:` trigger, and the app picks the relay up automatically via `apiBase()`.
 
 **B) Local laptop server** — `python serve.py` → open `http://localhost:8080`. Everything is
 same-origin here (agent commands, sync, free AI proxy), so this is the mode for device control.

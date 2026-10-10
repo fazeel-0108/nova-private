@@ -32,8 +32,12 @@ function apiBase() {
   if (override) return String(override).replace(/\/+$/, "");
   if (location.protocol === "file:") return RELAY_ORIGIN;
   const host = location.hostname;
+  // Served by its own server (serve.py, wrangler dev) → same origin.
   if (/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(host) || /\.local$/i.test(host)) return "";
-  try { if (host === new URL(RELAY_ORIGIN).hostname) return ""; } catch { /* bad constant */ }
+  // Served as the relay project's own assets → same origin, and each
+  // environment (preview/production) then talks to its own relay.
+  if (/\.freebuff\.page$/i.test(host)) return "";
+  // Any other static host (GitHub Pages) → the deployed relay.
   return RELAY_ORIGIN;
 }
 function apiUrl(path) { return apiBase() + path; }

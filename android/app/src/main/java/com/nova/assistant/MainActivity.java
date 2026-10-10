@@ -64,7 +64,7 @@ public class MainActivity extends Activity {
         });
 
         askMicPermission();
-        web.loadUrl("https://fazeel-0108.github.io/nova-private/");
+        web.loadUrl("https://site-b9ba42016ccb480083628abb2dfa4a74.freebuff.page/");
 
         // Start the always-on wake service (screen off, app closed = still listening).
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {

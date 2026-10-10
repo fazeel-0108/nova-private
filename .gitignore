@@ -33,3 +33,4 @@ relay/wrangler-dev.log
 .relay-state/
 relay/.wrangler/
 site-dist/
+node_modules/

@@ -4498,12 +4498,21 @@ async function privateGate() {
     } catch { /* offline: trust the stored token */ return true; }
   } else {
     // no token yet — is the gate even configured?
+    let gateAnswered = false;
     try {
-      const probe = await fetch(apiUrl("/api/gate"), { method: "GET" });
-      if (probe.status === 500) return true;      // NOVA_PASS not set → open site
+      const probe = await fetch(apiUrl("/api/gate"), { method: "GET", cache: "no-store" });
       const pj = await probe.json().catch(() => null);
+      gateAnswered = !!pj;
+      if (probe.status === 500) return true;      // NOVA_PASS not set → open site
       if (pj && pj.configured === false) return true;   // relay has no passcode → nothing to unlock
-    } catch { /* offline hosted: fall through to lock */ }
+    } catch { /* offline: handled below */ }
+    if (!gateAnswered) {
+      /* The gate lives on the relay. If the relay can't be reached, locking
+         the door would take notes, flashcards and Nova Lite down with it —
+         fail open, loudly, and only when we genuinely couldn't ask. */
+      toast("Passcode gate unreachable — opened without verifying it", "warn");
+      return true;
+    }
   }
   // show lock screen
   const lock = document.getElementById("lock"), inp = document.getElementById("lock-pass"),
